@@ -1,0 +1,255 @@
+import { Worker, Job } from 'bullmq';
+import { SpanStatusCode, trace } from '@opentelemetry/api';
+import { bullmqConnection } from '../connection.js';
+import { isOtelTracesEnabled } from '../../../instrument-otel.js';
+import {
+  RC_QUEUE_NAME, DL_QUEUE_NAME, WORKSHOP_QUEUE_NAME, INSURANCE_QUEUE_NAME,
+  ALL_QUEUES,
+} from './queues.js';
+import { DocumentService } from '../../../modules/document/document.service.js';
+import { DLQService } from '../dlq/dlq.service.js';
+import { AIService } from '../../ai/ai.service.js';
+import { ObserverService } from '../../observabllity/observer.service.js';
+import { WebhookService } from '../../webhook/webhook.service.js';
+import { runWithJobContext, getJobCostSummary } from '../../../shared/context/correlation.context.js';
+import { logJobCostSummary } from '../../../cost/logger.js';
+import { ExtractionResultCache } from '../../../cost/result-cache.service.js';
+import { _config } from '../../../config/config.js';
+
+const documentService = new DocumentService();
+const dlqService = new DLQService();
+const webhookService = new WebhookService();
+const obs = ObserverService.getInstance();
+const jobTracer = trace.getTracer('docs-intelligence-worker');
+
+// Circuit Breaker → pause / resume ALL four queues
+const breaker = AIService.getInstance().getBreaker();
+
+// on open event
+breaker.on('open', async () => {
+  obs.warn('Circuit Breaker (Gemini) is OPEN. Pausing all document queues...');
+  obs.recordCircuitBreakerState('open');
+  for (const q of ALL_QUEUES) {
+    try {
+      await q.pause();
+      obs.info(`Queue ${q.name} paused due to circuit open.`);
+    } catch (err) {
+      obs.logError(`Failed to pause queue ${q.name} on circuit open`, err);
+    }
+  }
+});
+
+// on half open event
+breaker.on('halfOpen', async () => {
+  obs.info('Circuit Breaker (Gemini) is HALF_OPEN. Resuming all queues for trial job...');
+  obs.recordCircuitBreakerState('halfOpen');
+  for (const q of ALL_QUEUES) {
+    try {
+      await q.resume();
+    } catch (err) {
+      obs.logError(`Failed to resume queue ${q.name} on circuit halfOpen`, err);
+    }
+  }
+});
+
+// on close event
+breaker.on('close', async () => {
+  obs.info('Circuit Breaker (Gemini) is CLOSED. Resuming all document queues.');
+  obs.recordCircuitBreakerState('closed');
+  for (const q of ALL_QUEUES) {
+    try {
+      await q.resume();
+    } catch (err) {
+      obs.logError(`Failed to resume queue ${q.name} on circuit close`, err);
+    }
+  }
+});
+
+// Shared Worker Options — lockDuration from WORKER_LOCK_DURATION_MS (default: circuit timeout + 30s)
+const sharedWorkerOptions = {
+  prefix: _config.QUEUE_PREFIX,
+  lockDuration: _config.WORKER_LOCK_DURATION_MS,
+  stalledInterval: 30000,
+  maxStalledCount: 1,
+  skipVersionCheck: true,
+};
+
+// Job Processor
+// Re-hydrates the correlation context from job data (workers run in a different
+// async context). Fires the webhook after every terminal outcome (success or
+// final failure — not retryable intermediate failures).
+const processDocumentJob = async (job: Job): Promise<any> => {
+  const { type, urls, correlationId } = job.data;
+  const effectiveCorrelationId = correlationId ?? job.id ?? 'no-context';
+  const startTime = Date.now();
+
+  const runJob = async () => runWithJobContext(effectiveCorrelationId, type, job.id ?? 'unknown', async () => {
+    obs.info('Worker starting extraction', { jobId: job.id, type, queue: job.queueName });
+
+    const flushJobCost = (status: 'success' | 'failure') => {
+      const summary = getJobCostSummary();
+      if (summary && summary.apiCallCount > 0) {
+        logJobCostSummary(summary, status);
+      }
+    };
+
+    try {
+      const extractedData = await documentService.extractData(type, urls);
+      const durationMs = Date.now() - startTime;
+      const summary = getJobCostSummary();
+
+      flushJobCost('success');
+
+      obs.logQueueJob({
+        queueName: job.queueName,
+        jobId: job.id,
+        documentType: type,
+        attemptsMade: job.attemptsMade,
+        durationMs,
+        status: 'success',
+        correlationId: effectiveCorrelationId,
+        aiCostUsd: summary?.totalCostUsd,
+        aiCostINR: summary?.totalCostINR,
+        aiTotalTokens: summary?.totalTokens,
+        aiCallCount: summary?.apiCallCount,
+        apiKeyLabel: summary?.apiKeyLabel,
+      });
+
+      // Push result to downstream (Laravel) via webhook — best-effort, never throws
+      void webhookService.send({
+        correlationId: effectiveCorrelationId,
+        jobId: job.id,
+        documentType: type,
+        status: 'success',
+        result: extractedData,
+        error: null,
+        durationMs,
+        timestamp: new Date().toISOString(),
+      });
+
+      const urlList = Array.isArray(urls) ? urls : [urls];
+      void ExtractionResultCache.set(type, urlList, extractedData);
+
+      return extractedData;
+    } catch (error: any) {
+      const durationMs = Date.now() - startTime;
+      const isLastAttempt = job.attemptsMade >= (job.opts.attempts ?? 3) - 1;
+      const summary = getJobCostSummary();
+
+      flushJobCost('failure');
+
+      obs.logQueueJob({
+        queueName: job.queueName,
+        jobId: job.id,
+        documentType: type,
+        attemptsMade: job.attemptsMade,
+        durationMs,
+        status: 'failure',
+        correlationId: effectiveCorrelationId,
+        errorStack: error?.stack,
+        aiCostUsd: summary?.totalCostUsd,
+        aiCostINR: summary?.totalCostINR,
+        aiTotalTokens: summary?.totalTokens,
+        aiCallCount: summary?.apiCallCount,
+        apiKeyLabel: summary?.apiKeyLabel,
+      });
+
+      // Only fire the failure webhook on the last attempt (no more retries coming)
+      if (isLastAttempt) {
+        void webhookService.send({
+          correlationId: effectiveCorrelationId,
+          jobId: job.id,
+          documentType: type,
+          status: 'failure',
+          result: null,
+          error: error?.message ?? 'Unknown extraction error',
+          durationMs,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      // Preserve cost snapshot for DLQ (async context ends after throw)
+      if (summary && summary.apiCallCount > 0) {
+        (error as Error & { costSummary?: typeof summary }).costSummary = summary;
+      }
+
+      throw error; // Let BullMQ handle retry / DLQ routing
+    }
+  });
+
+  if (!isOtelTracesEnabled()) {
+    return runJob();
+  }
+
+  return jobTracer.startActiveSpan(
+    'bullmq.extract',
+    {
+      attributes: {
+        'queue.name': job.queueName,
+        'document.type': type,
+        'job.id': job.id ?? '',
+        'correlation.id': effectiveCorrelationId,
+      },
+    },
+    async (span) => {
+      try {
+        const result = await runJob();
+        span.setStatus({ code: SpanStatusCode.OK });
+        return result;
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Job failed';
+        span.setStatus({ code: SpanStatusCode.ERROR, message });
+        if (error instanceof Error) span.recordException(error);
+        throw error;
+      } finally {
+        span.end();
+      }
+    },
+  );
+};
+
+// make the failure handler
+const makeFailureHandler = (queueName: string) => (job: Job | undefined, err: Error) => {
+  dlqService.handleFailedJob(job, err, queueName);
+};
+
+// initialize the workers
+
+// RC Worker - FAST lane: 10 concurrent, 30 jobs/min
+export const rcWorker = new Worker(RC_QUEUE_NAME, processDocumentJob, {
+  connection: bullmqConnection.duplicate() as any,
+  concurrency: 10,
+  limiter: { max: 30, duration: 60000 },
+  ...sharedWorkerOptions,
+});
+rcWorker.on('failed', makeFailureHandler(RC_QUEUE_NAME));
+
+// DL Worker - FAST lane: 10 concurrent, 30 jobs/min
+export const dlWorker = new Worker(DL_QUEUE_NAME, processDocumentJob, {
+  connection: bullmqConnection.duplicate() as any,
+  concurrency: 10,
+  limiter: { max: 30, duration: 60000 },
+  ...sharedWorkerOptions,
+});
+dlWorker.on('failed', makeFailureHandler(DL_QUEUE_NAME));
+
+// Workshop Worker - HEAVY lane: 2 concurrent, 5 jobs/min
+export const workshopWorker = new Worker(WORKSHOP_QUEUE_NAME, processDocumentJob, {
+  connection: bullmqConnection.duplicate() as any,
+  concurrency: 2,
+  limiter: { max: 5, duration: 60000 },
+  ...sharedWorkerOptions,
+});
+workshopWorker.on('failed', makeFailureHandler(WORKSHOP_QUEUE_NAME));
+
+// Insurance Worker - HEAVY lane: 2 concurrent, 5 jobs/min
+export const insuranceWorker = new Worker(INSURANCE_QUEUE_NAME, processDocumentJob, {
+  connection: bullmqConnection.duplicate() as any,
+  concurrency: 2,
+  limiter: { max: 5, duration: 60000 },
+  ...sharedWorkerOptions,
+});
+insuranceWorker.on('failed', makeFailureHandler(INSURANCE_QUEUE_NAME));
+
+// log the workers initialization
+obs.info('All four document workers initialized: rc-queue, dl-queue, workshop-queue, insurance-queue');

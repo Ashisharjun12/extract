@@ -1,0 +1,62 @@
+# ─── Secrets (never commit) ───────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+**/.env
+!env.docker.example
+!**/.env.example
+!**/.env.sample
+
+# ─── Docker (local overrides only — compose + example are tracked) ─────────────
+docker-compose.override.yml
+docker-compose.local.yml
+
+# ─── Node.js — aimodule, test-backend, web ───────────────────────────────────
+node_modules/
+**/node_modules/
+.pnpm-store/
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ─── aimodule (TypeScript API + workers) ─────────────────────────────────────
+aimodule/dist/
+aimodule/build/
+aimodule/newrelic_agent.log
+aimodule/*.log
+
+# ─── test-backend (portal API) ───────────────────────────────────────────────
+test-backend/logs/
+test-backend/*.log
+
+# ─── web (Vite + React) ──────────────────────────────────────────────────────
+web/dist/
+web/dist-ssr/
+web/.vite/
+web/coverage/
+
+# ─── Logs & runtime ───────────────────────────────────────────────────────────
+logs/
+*.log
+*.pid
+*.seed
+
+# ─── OS & editor ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ─── Test / cache ─────────────────────────────────────────────────────────────
+coverage/
+.nyc_output/
+.cache/
+.turbo/
+*.tsbuildinfo
+
+/docs/

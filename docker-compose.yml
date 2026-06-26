@@ -1,0 +1,140 @@
+name: docs-intelligence
+
+services:
+  aimodule:
+    build:
+      context: ./aimodule
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      PORT: 3000
+      NODE_ENV: production
+      STORAGE_PROVIDER: gcp
+      RUN_WORKERS: "false"
+      WEBHOOK_URL: http://test-backend:3001/api/webhook/extraction-complete
+      # Extraction cost controls (defaults match aimodule/.env.sample)
+      WORKSHOP_CHUNK_FALLBACK_ENABLED: ${WORKSHOP_CHUNK_FALLBACK_ENABLED:-true}
+      WORKSHOP_CHUNK_PAGE_SIZE: ${WORKSHOP_CHUNK_PAGE_SIZE:-6}
+      WORKSHOP_CHUNK_AI_MODEL: ${WORKSHOP_CHUNK_AI_MODEL:-gemini-3.1-flash-lite}
+      WORKSHOP_LEAN_MODE: ${WORKSHOP_LEAN_MODE:-true}
+      POLICY_MULTIPASS_FALLBACK_ENABLED: ${POLICY_MULTIPASS_FALLBACK_ENABLED:-true}
+      WORKSHOP_MAX_OUTPUT_TOKENS: ${WORKSHOP_MAX_OUTPUT_TOKENS:-65536}
+      POLICY_MAX_OUTPUT_TOKENS: ${POLICY_MAX_OUTPUT_TOKENS:-65536}
+      WORKSHOP_MAX_GEMINI_RETRIES: ${WORKSHOP_MAX_GEMINI_RETRIES:-1}
+      POLICY_MAX_GEMINI_RETRIES: ${POLICY_MAX_GEMINI_RETRIES:-1}
+      RC_MAX_GEMINI_RETRIES: ${RC_MAX_GEMINI_RETRIES:-1}
+      DL_MAX_GEMINI_RETRIES: ${DL_MAX_GEMINI_RETRIES:-1}
+      NEW_RELIC_APP_NAME: ${NEW_RELIC_APP_NAME:-docs-intelligence-api}
+      NEW_RELIC_LOG_FILEPATH: stdout
+      NEW_RELIC_ENABLED: ${NEW_RELIC_ENABLED:-true}
+      NEW_RELIC_APPLICATION_LOGGING_ENABLED: "true"
+      NEW_RELIC_APPLICATION_LOGGING_FORWARDING_ENABLED: "true"
+      OBSERVABILITY_PROVIDER: ${OBSERVABILITY_PROVIDER:-all}
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_TRACES_ENABLED: ${OTEL_TRACES_ENABLED:-true}
+      OTEL_LOGS_ENABLED: ${OTEL_LOGS_ENABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://74.113.235.245:4318}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://74.113.235.245:4318/v1/traces}
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: ${OTEL_EXPORTER_OTLP_LOGS_ENDPOINT:-http://74.113.235.245:4318/v1/logs}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-docs-intelligence-api}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+      OTEL_EXPORTER_OTLP_LOGS_PROTOCOL: ${OTEL_EXPORTER_OTLP_LOGS_PROTOCOL:-http/protobuf}
+    expose:
+      - "3000"
+    networks:
+      - docs
+    restart: unless-stopped
+
+  aimodule-worker:
+    build:
+      context: ./aimodule
+      dockerfile: Dockerfile
+    command: ["node", "dist/worker.js"]
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      STORAGE_PROVIDER: gcp
+      WEBHOOK_URL: http://test-backend:3001/api/webhook/extraction-complete
+      RUN_WORKERS: "true"
+      RUN_DLQ_WORKER: "true"
+      # Extraction cost controls (defaults match aimodule/.env.sample)
+      WORKSHOP_CHUNK_FALLBACK_ENABLED: ${WORKSHOP_CHUNK_FALLBACK_ENABLED:-true}
+      WORKSHOP_CHUNK_PAGE_SIZE: ${WORKSHOP_CHUNK_PAGE_SIZE:-6}
+      WORKSHOP_CHUNK_AI_MODEL: ${WORKSHOP_CHUNK_AI_MODEL:-gemini-3.1-flash-lite}
+      WORKSHOP_LEAN_MODE: ${WORKSHOP_LEAN_MODE:-true}
+      POLICY_MULTIPASS_FALLBACK_ENABLED: ${POLICY_MULTIPASS_FALLBACK_ENABLED:-true}
+      WORKSHOP_MAX_OUTPUT_TOKENS: ${WORKSHOP_MAX_OUTPUT_TOKENS:-65536}
+      POLICY_MAX_OUTPUT_TOKENS: ${POLICY_MAX_OUTPUT_TOKENS:-65536}
+      WORKSHOP_MAX_GEMINI_RETRIES: ${WORKSHOP_MAX_GEMINI_RETRIES:-1}
+      POLICY_MAX_GEMINI_RETRIES: ${POLICY_MAX_GEMINI_RETRIES:-1}
+      RC_MAX_GEMINI_RETRIES: ${RC_MAX_GEMINI_RETRIES:-1}
+      DL_MAX_GEMINI_RETRIES: ${DL_MAX_GEMINI_RETRIES:-1}
+      NEW_RELIC_APP_NAME: ${NEW_RELIC_WORKER_APP_NAME:-docs-intelligence-worker}
+      NEW_RELIC_LOG_FILEPATH: stdout
+      NEW_RELIC_ENABLED: ${NEW_RELIC_ENABLED:-true}
+      NEW_RELIC_APPLICATION_LOGGING_ENABLED: "true"
+      NEW_RELIC_APPLICATION_LOGGING_FORWARDING_ENABLED: "true"
+      OBSERVABILITY_PROVIDER: ${OBSERVABILITY_PROVIDER:-all}
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_TRACES_ENABLED: ${OTEL_TRACES_ENABLED:-true}
+      OTEL_LOGS_ENABLED: ${OTEL_LOGS_ENABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://74.113.235.245:4318}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://74.113.235.245:4318/v1/traces}
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: ${OTEL_EXPORTER_OTLP_LOGS_ENDPOINT:-http://74.113.235.245:4318/v1/logs}
+      OTEL_SERVICE_NAME: ${OTEL_WORKER_SERVICE_NAME:-docs-intelligence-worker}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+      OTEL_EXPORTER_OTLP_LOGS_PROTOCOL: ${OTEL_EXPORTER_OTLP_LOGS_PROTOCOL:-http/protobuf}
+    depends_on:
+      aimodule:
+        condition: service_healthy
+    networks:
+      - docs
+    restart: unless-stopped
+
+  test-backend:
+    build:
+      context: ./test-backend
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      PORT: 3001
+      NODE_ENV: production
+      STORAGE_PROVIDER: r2
+      AIMODULE_URL: http://aimodule:3000
+      AIMODULE_ADMIN_API_KEY: ${ADMIN_API_KEY}
+      CORS_ORIGIN: ${PUBLIC_URL:-http://localhost}
+      NEW_RELIC_APP_NAME: ${NEW_RELIC_PORTAL_APP_NAME:-docs-intelligence-portal}
+      NEW_RELIC_LOG_FILEPATH: stdout
+      NEW_RELIC_ENABLED: ${NEW_RELIC_ENABLED:-true}
+      NEW_RELIC_APPLICATION_LOGGING_ENABLED: "true"
+      NEW_RELIC_APPLICATION_LOGGING_FORWARDING_ENABLED: "true"
+    depends_on:
+      aimodule:
+        condition: service_healthy
+    expose:
+      - "3001"
+    networks:
+      - docs
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        VITE_ADMIN_API_URL: ${PUBLIC_URL:-http://localhost}
+        VITE_TESTER_API_URL: ${PUBLIC_URL:-http://localhost}
+    ports:
+      - "${WEB_PORT:-80}:80"
+    depends_on:
+      - test-backend
+    networks:
+      - docs
+    restart: unless-stopped
+
+networks:
+  docs:
+    driver: bridge

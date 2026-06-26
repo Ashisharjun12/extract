@@ -1,0 +1,294 @@
+import { config } from 'dotenv';
+
+config();
+
+/** Parse numeric env vars safely — strips quotes and accidental inline comments in .env */
+function parseEnvInt(value: string | undefined, fallback: number): number {
+  if (value == null || value === '') return fallback;
+  const cleaned = value.replace(/^["']|["']$/g, '').trim().split(/\s+/)[0];
+  const n = parseInt(cleaned, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/** Treat blank .env values as unset so optional overrides inherit tier defaults. */
+function parseEnvOptional(value: string | undefined): string | undefined {
+  if (value == null || value.trim() === '') return undefined;
+  return value.trim();
+}
+
+function parseEnvFloat(value: string | undefined, fallback: number): number {
+  if (value == null || value === '') return fallback;
+  const cleaned = value.replace(/^["']|["']$/g, '').trim().split(/\s+/)[0];
+  const n = parseFloat(cleaned);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * All env vars loaded by the app via `_config`.
+ *
+ * Agent-only (set in .env but NOT exported here — read by New Relic agent directly):
+ *   NEW_RELIC_LOG_FILEPATH, NEW_RELIC_LOG_LEVEL, NEW_RELIC_ENABLED,
+ *   NEW_RELIC_DISTRIBUTED_TRACING_ENABLED, NEW_RELIC_AI_MONITORING_ENABLED, etc.
+ *
+ * OTel logs (pino-opentelemetry-transport reads OTEL_EXPORTER_OTLP_LOGS_* from process.env;
+ * config.ts backfills OTEL_EXPORTER_OTLP_LOGS_ENDPOINT when unset).
+ *
+ * Optional fallback (not in .env): GOOGLE_APPLICATION_CREDENTIALS — GCS auth file path.
+ */
+const {
+  PORT,
+  NODE_ENV,
+  JWT_SECRET,
+  STORAGE_PROVIDER,
+  GEMINI_API_KEY,
+  GEMINI_API_KEY_LABEL,
+  AI_MODEL,
+  AI_MODEL_LITE,
+  AI_MODEL_PRO,
+  RC_AI_MODEL,
+  DL_AI_MODEL,
+  WORKSHOP_AI_MODEL,
+  WORKSHOP_CHUNK_AI_MODEL,
+  POLICY_AI_MODEL,
+  RC_MAX_OUTPUT_TOKENS,
+  DL_MAX_OUTPUT_TOKENS,
+  WORKSHOP_MAX_OUTPUT_TOKENS,
+  POLICY_MAX_OUTPUT_TOKENS,
+  REDIS_QUEUE_URI,
+  GCS_BUCKET_NAME,
+  GCS_CLIENT_EMAIL,
+  GCS_PROJECT_ID,
+  GCS_PRIVATE_KEY,
+  REDIS_RATE_LIMIT_URI,
+  MAX_QUEUE_SIZE,
+  QUEUE_PREFIX,
+  JOB_TIMEOUT_MS,
+  GEMINI_CIRCUIT_TIMEOUT_MS,
+  GEMINI_CIRCUIT_RESET_TIMEOUT_MS,
+  WORKER_LOCK_DURATION_MS,
+  DOWNLOAD_TIMEOUT_MS,
+  PDF_DOWNLOAD_TIMEOUT_MS,
+  ADMIN_API_KEY,
+  OBSERVABILITY_PROVIDER,
+  DLQ_ALERT_THRESHOLD,
+  WEBHOOK_URL,
+  WEBHOOK_SECRET,
+  PRESCREEN_ENABLED,
+  PRESCREEN_MODEL,
+  PRESCREEN_MAX_PDF_PAGES,
+  PRESCREEN_MAX_OUTPUT_TOKENS,
+  PRESCREEN_REJECT_CONFIDENCE,
+  PRESCREEN_BLUR_CONFIDENCE,
+  PRESCREEN_LARGE_PDF_PAGE1,
+  USD_TO_INR,
+  AI_MODEL_INPUT_USD_PER_1M,
+  AI_MODEL_OUTPUT_USD_PER_1M,
+  AI_MODEL_LITE_INPUT_USD_PER_1M,
+  AI_MODEL_LITE_OUTPUT_USD_PER_1M,
+  AI_MODEL_PRO_INPUT_USD_PER_1M,
+  AI_MODEL_PRO_OUTPUT_USD_PER_1M,
+  AI_MODEL_CACHE_INPUT_USD_PER_1M,
+  AI_MODEL_LITE_CACHE_INPUT_USD_PER_1M,
+  AI_MODEL_PRO_CACHE_INPUT_USD_PER_1M,
+  PROMPT_CACHING,
+  PROMPT_CACHE_TTL_SECONDS,
+  PROMPT_CACHE_MIN_TOKENS,
+  NEW_RELIC_LICENSE_KEY,
+  NEW_RELIC_APP_NAME,
+  OTEL_ENABLED,
+  OTEL_TRACES_ENABLED,
+  OTEL_LOGS_ENABLED,
+  OTEL_EXPORTER_OTLP_ENDPOINT,
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
+  OTEL_EXPORTER_OTLP_LOGS_ENDPOINT,
+  OTEL_SERVICE_NAME,
+  OTEL_EXPORTER_OTLP_PROTOCOL,
+  OTEL_EXPORTER_OTLP_LOGS_PROTOCOL,
+  QUEUE_PRIORITY_URGENT,
+  QUEUE_PRIORITY_FAST,
+  QUEUE_PRIORITY_HEAVY,
+  QUEUE_PRIORITY_LOW,
+  RUN_WORKERS,
+  RUN_DLQ_WORKER,
+  RESULT_CACHE_ENABLED,
+  RESULT_CACHE_TTL_SECONDS,
+  DEFAULT_EXTRACT_MODE,
+  WORKSHOP_MULTIPASS_PAGE_THRESHOLD,
+  WORKSHOP_CHUNK_FALLBACK_ENABLED,
+  WORKSHOP_CHUNK_PAGE_SIZE,
+  WORKSHOP_LEAN_MODE,
+  WORKSHOP_SINGLE_PASS_MAX_PAGES,
+  WORKSHOP_MAX_GEMINI_RETRIES,
+  POLICY_MULTIPASS_PAGE_THRESHOLD,
+  POLICY_MULTIPASS_FALLBACK_ENABLED,
+  POLICY_MAX_GEMINI_RETRIES,
+  RC_MAX_GEMINI_RETRIES,
+  DL_MAX_GEMINI_RETRIES,
+} = process.env;
+
+const jobTimeoutMs = parseEnvInt(JOB_TIMEOUT_MS, 120_000);
+const geminiCircuitTimeoutMs = parseEnvInt(GEMINI_CIRCUIT_TIMEOUT_MS, jobTimeoutMs);
+const workerLockDurationMs = parseEnvInt(WORKER_LOCK_DURATION_MS, geminiCircuitTimeoutMs + 30_000);
+
+const resolvedAiModel = parseEnvOptional(AI_MODEL);
+const resolvedAiModelLite = parseEnvOptional(AI_MODEL_LITE) ?? resolvedAiModel;
+const resolvedAiModelPro = parseEnvOptional(AI_MODEL_PRO) ?? resolvedAiModel;
+
+export const _config = {
+  // Server
+  PORT,
+  NODE_ENV,
+  JWT_SECRET,
+
+  // Storage
+  STORAGE_PROVIDER,
+  GCS_BUCKET_NAME,
+  GCS_CLIENT_EMAIL,
+  GCS_PROJECT_ID,
+  GCS_PRIVATE_KEY,
+
+  // Gemini
+  GEMINI_API_KEY,
+  GEMINI_API_KEY_LABEL,
+  AI_MODEL:          resolvedAiModel,
+  AI_MODEL_LITE:     resolvedAiModelLite,
+  AI_MODEL_PRO:        resolvedAiModelPro,
+  RC_AI_MODEL:       parseEnvOptional(RC_AI_MODEL)       ?? resolvedAiModelLite,
+  DL_AI_MODEL:       parseEnvOptional(DL_AI_MODEL)       ?? resolvedAiModelLite,
+  WORKSHOP_AI_MODEL:       parseEnvOptional(WORKSHOP_AI_MODEL)       ?? resolvedAiModelPro,
+  /** Model used for chunk-fallback passes (meta + per-chunk). Defaults to AI_MODEL_LITE to save cost. */
+  WORKSHOP_CHUNK_AI_MODEL: parseEnvOptional(WORKSHOP_CHUNK_AI_MODEL) ?? resolvedAiModelLite,
+  POLICY_AI_MODEL:         parseEnvOptional(POLICY_AI_MODEL)         ?? resolvedAiModelPro,
+
+  // Token ceilings (string — parsed at call site or via cost/token-budget.ts)
+  RC_MAX_OUTPUT_TOKENS,
+  DL_MAX_OUTPUT_TOKENS,
+  WORKSHOP_MAX_OUTPUT_TOKENS,
+  POLICY_MAX_OUTPUT_TOKENS,
+  /** @deprecated Unused — workshop always tries single-pass first. */
+  WORKSHOP_MULTIPASS_PAGE_THRESHOLD: parseEnvInt(WORKSHOP_MULTIPASS_PAGE_THRESHOLD, 15),
+  /** After single-pass truncation, slice PDF locally and extract per chunk (default true). */
+  WORKSHOP_CHUNK_FALLBACK_ENABLED: WORKSHOP_CHUNK_FALLBACK_ENABLED ?? 'true',
+  /** Pages per local PDF slice when chunk fallback runs (default 2). */
+  WORKSHOP_CHUNK_PAGE_SIZE: parseEnvInt(WORKSHOP_CHUNK_PAGE_SIZE, 2),
+  /**
+   * Max pages for single-pass when lean mode is off. With WORKSHOP_LEAN_MODE=true, any
+   * multi-page PDF (2+) uses chunk mode directly — single-pass is 1-page bills only.
+   * Default 1.
+   */
+  WORKSHOP_SINGLE_PASS_MAX_PAGES: parseEnvInt(WORKSHOP_SINGLE_PASS_MAX_PAGES, 1),
+  /**
+   * Lean extraction mode — extracts ONLY partsTable + labourTable (no workshopDetails, summary).
+   * Saves ~1 API call on large bills by skipping the meta pass in chunk fallback.
+   * Default false (full extraction).
+   */
+  WORKSHOP_LEAN_MODE: WORKSHOP_LEAN_MODE === 'true',
+  /** Gemini retries per workshop call — 1 avoids 3× cost on transient errors (default 1). */
+  WORKSHOP_MAX_GEMINI_RETRIES: parseEnvInt(WORKSHOP_MAX_GEMINI_RETRIES, 1),
+  /** @deprecated Unused — policy always tries single-pass first. */
+  POLICY_MULTIPASS_PAGE_THRESHOLD: parseEnvInt(POLICY_MULTIPASS_PAGE_THRESHOLD, 15),
+  /** @deprecated Multipass disabled by default — single-pass + one retry only (cost control). */
+  POLICY_MULTIPASS_FALLBACK_ENABLED: POLICY_MULTIPASS_FALLBACK_ENABLED ?? 'false',
+  /** Gemini retries per policy call (default 1). */
+  POLICY_MAX_GEMINI_RETRIES: parseEnvInt(POLICY_MAX_GEMINI_RETRIES, 1),
+  /** Gemini retries per RC call (default 1). */
+  RC_MAX_GEMINI_RETRIES: parseEnvInt(RC_MAX_GEMINI_RETRIES, 1),
+  /** Gemini retries per DL call (default 1). */
+  DL_MAX_GEMINI_RETRIES: parseEnvInt(DL_MAX_GEMINI_RETRIES, 1),
+
+  // Prescreen
+  PRESCREEN_ENABLED:           PRESCREEN_ENABLED ?? 'true',
+  PRESCREEN_MODEL:               parseEnvOptional(PRESCREEN_MODEL) ?? resolvedAiModelLite,
+  PRESCREEN_MAX_PDF_PAGES:       parseEnvInt(PRESCREEN_MAX_PDF_PAGES, 3),
+  PRESCREEN_MAX_OUTPUT_TOKENS:   parseEnvInt(PRESCREEN_MAX_OUTPUT_TOKENS, 512),
+  /** Below this prescreen confidence → reject as unreadable (default 0.25). */
+  PRESCREEN_REJECT_CONFIDENCE:   parseEnvFloat(PRESCREEN_REJECT_CONFIDENCE, 0.25),
+  /** Below this prescreen confidence (or isBlurred) → extract but flag human review (default 0.55). */
+  PRESCREEN_BLUR_CONFIDENCE:     parseEnvFloat(PRESCREEN_BLUR_CONFIDENCE, 0.55),
+  /** Prescreen page 1 only for PDFs above PRESCREEN_MAX_PDF_PAGES (default true). */
+  PRESCREEN_LARGE_PDF_PAGE1:     PRESCREEN_LARGE_PDF_PAGE1 ?? 'true',
+
+  // Pricing (USD per 1M tokens)
+  USD_TO_INR:                    USD_TO_INR ?? '84',
+  AI_MODEL_INPUT_USD_PER_1M:       AI_MODEL_INPUT_USD_PER_1M       ?? '0.25',
+  AI_MODEL_OUTPUT_USD_PER_1M:      AI_MODEL_OUTPUT_USD_PER_1M      ?? '1.50',
+  AI_MODEL_LITE_INPUT_USD_PER_1M:  AI_MODEL_LITE_INPUT_USD_PER_1M  ?? '0.25',
+  AI_MODEL_LITE_OUTPUT_USD_PER_1M: AI_MODEL_LITE_OUTPUT_USD_PER_1M ?? '1.50',
+  AI_MODEL_PRO_INPUT_USD_PER_1M:   AI_MODEL_PRO_INPUT_USD_PER_1M   ?? '0.30',
+  AI_MODEL_PRO_OUTPUT_USD_PER_1M:  AI_MODEL_PRO_OUTPUT_USD_PER_1M  ?? '2.50',
+  AI_MODEL_CACHE_INPUT_USD_PER_1M:       AI_MODEL_CACHE_INPUT_USD_PER_1M       ?? '0.025',
+  AI_MODEL_LITE_CACHE_INPUT_USD_PER_1M:  AI_MODEL_LITE_CACHE_INPUT_USD_PER_1M  ?? '0.025',
+  AI_MODEL_PRO_CACHE_INPUT_USD_PER_1M:   AI_MODEL_PRO_CACHE_INPUT_USD_PER_1M   ?? '0.03',
+
+  // Prompt caching: off | implicit | explicit
+  PROMPT_CACHING:           PROMPT_CACHING ?? 'implicit',
+  PROMPT_CACHE_TTL_SECONDS: parseEnvInt(PROMPT_CACHE_TTL_SECONDS, 3600),
+  PROMPT_CACHE_MIN_TOKENS:  parseEnvInt(PROMPT_CACHE_MIN_TOKENS, 2048),
+
+  // Redis / Queue
+  REDIS_QUEUE_URI,
+  REDIS_RATE_LIMIT_URI,
+  MAX_QUEUE_SIZE,
+  QUEUE_PREFIX:            QUEUE_PREFIX ?? 'bull',
+  JOB_TIMEOUT_MS:          jobTimeoutMs,
+  /** Opossum timeout per Gemini call — defaults to JOB_TIMEOUT_MS */
+  GEMINI_CIRCUIT_TIMEOUT_MS: geminiCircuitTimeoutMs,
+  GEMINI_CIRCUIT_RESET_TIMEOUT_MS: parseEnvInt(GEMINI_CIRCUIT_RESET_TIMEOUT_MS, 30_000),
+  /** BullMQ lock renewal — defaults to GEMINI_CIRCUIT_TIMEOUT_MS + 30s */
+  WORKER_LOCK_DURATION_MS: workerLockDurationMs,
+  DOWNLOAD_TIMEOUT_MS:     parseEnvInt(DOWNLOAD_TIMEOUT_MS, 45_000),
+  PDF_DOWNLOAD_TIMEOUT_MS: parseEnvInt(
+    PDF_DOWNLOAD_TIMEOUT_MS,
+    parseEnvInt(DOWNLOAD_TIMEOUT_MS, 45_000) * 2,
+  ),
+  QUEUE_PRIORITY_URGENT: parseEnvInt(QUEUE_PRIORITY_URGENT, 1),
+  QUEUE_PRIORITY_FAST:   parseEnvInt(QUEUE_PRIORITY_FAST, 1),
+  QUEUE_PRIORITY_HEAVY:  parseEnvInt(QUEUE_PRIORITY_HEAVY, 5),
+  QUEUE_PRIORITY_LOW:    parseEnvInt(QUEUE_PRIORITY_LOW, 10),
+
+  // Extract API + result cache
+  DEFAULT_EXTRACT_MODE:     DEFAULT_EXTRACT_MODE ?? 'sync',
+  RESULT_CACHE_ENABLED:     RESULT_CACHE_ENABLED ?? 'true',
+  RESULT_CACHE_TTL_SECONDS: parseEnvInt(RESULT_CACHE_TTL_SECONDS, 86_400),
+
+  // Deploy split (prod API: RUN_WORKERS=false)
+  RUN_WORKERS:    RUN_WORKERS    ?? 'true',
+  RUN_DLQ_WORKER: RUN_DLQ_WORKER ?? 'true',
+
+  // Webhook
+  WEBHOOK_URL,
+  WEBHOOK_SECRET,
+
+  // Observability
+  OBSERVABILITY_PROVIDER: OBSERVABILITY_PROVIDER ?? 'both',
+  NEW_RELIC_LICENSE_KEY,
+  NEW_RELIC_APP_NAME,
+
+  // OpenTelemetry / SigNoz (parallel with New Relic — disable NR later via NEW_RELIC_ENABLED=false)
+  OTEL_ENABLED: OTEL_ENABLED === 'true',
+  OTEL_TRACES_ENABLED: OTEL_TRACES_ENABLED !== 'false',
+  OTEL_LOGS_ENABLED: OTEL_LOGS_ENABLED === 'true',
+  OTEL_EXPORTER_OTLP_ENDPOINT: OTEL_EXPORTER_OTLP_ENDPOINT ?? 'http://localhost:4318',
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ??
+    `${(OTEL_EXPORTER_OTLP_ENDPOINT ?? 'http://localhost:4318').replace(/\/$/, '')}/v1/traces`,
+  OTEL_EXPORTER_OTLP_LOGS_ENDPOINT:
+    OTEL_EXPORTER_OTLP_LOGS_ENDPOINT ??
+    `${(OTEL_EXPORTER_OTLP_ENDPOINT ?? 'http://localhost:4318').replace(/\/$/, '')}/v1/logs`,
+  OTEL_SERVICE_NAME: OTEL_SERVICE_NAME ?? 'docs-intelligence',
+  OTEL_EXPORTER_OTLP_PROTOCOL: OTEL_EXPORTER_OTLP_PROTOCOL ?? 'http/protobuf',
+  OTEL_EXPORTER_OTLP_LOGS_PROTOCOL:
+    OTEL_EXPORTER_OTLP_LOGS_PROTOCOL ?? OTEL_EXPORTER_OTLP_PROTOCOL ?? 'http/protobuf',
+
+  // Admin
+  ADMIN_API_KEY,
+  DLQ_ALERT_THRESHOLD: parseEnvInt(DLQ_ALERT_THRESHOLD, 20),
+};
+
+// Resolve OTel logs env for pino-opentelemetry-transport (reads process.env directly)
+if (!process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT) {
+  process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT = _config.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
+}
+if (!process.env.OTEL_EXPORTER_OTLP_LOGS_PROTOCOL) {
+  process.env.OTEL_EXPORTER_OTLP_LOGS_PROTOCOL = _config.OTEL_EXPORTER_OTLP_LOGS_PROTOCOL;
+}
