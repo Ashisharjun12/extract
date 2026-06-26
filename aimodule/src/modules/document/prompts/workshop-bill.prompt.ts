@@ -155,17 +155,18 @@ export const getWorkshopMetaPrompt = (): string => `
   If isCorrectDocumentType is false, STOP.
 `;
 
-export const getWorkshopChunkPrompt = (pageStart: number, pageEnd: number): string => `
-  You are an expert Indian workshop bill OCR assistant — TABLE ROWS ONLY for pages ${pageStart}–${pageEnd}.
+export const getWorkshopChunkPrompt = (): string => `
+  You are an expert Indian workshop bill OCR assistant — TABLE ROWS ONLY.
   Bill format is unknown — apply universal rules below.
 
-  Extract ONLY table data rows visible on these pages. No header, no summary, no gate fields.
+  Extract ONLY table data rows visible on the provided PDF page(s) / slice.
+  No header, no summary, no gate fields.
 
   ${COLUMN_MAPPING}
   ${TABLE_RULES}
 
-  • partsTable — all spare/part rows on pages ${pageStart}–${pageEnd}. Use [] if none on these pages.
-  • labourTable — all labour/service/misc-activity rows on pages ${pageStart}–${pageEnd}. Use [] if none.
+  • partsTable — all spare/part rows on these page(s). Use [] if none.
+  • labourTable — all labour/service/misc-activity rows on these page(s). Use [] if none.
   • Skip: dealer letterhead, column header row, section titles, subtotal/grand-total footer lines.
   • s (Sr.No) continues from earlier pages — do NOT restart; preserve printed values.
   • "Miscellaneous Activity" / HSN 998714 / service descriptions → labourTable.
@@ -194,9 +195,9 @@ export const getWorkshopLeanSinglePassPrompt = (): string => `
   ${TABLE_RULES}
 
   QUALITY: Set requiresHumanReview=true if scan is blurry, out-of-focus, or partially cut off.
-  confidenceScore 0.0–1.0. List unclear fields in lowConfidenceFields[].
+  confidenceScore 0.0-1.0. List unclear fields in lowConfidenceFields[].
 
-  CRITICAL: If this bill has 50–300+ rows, you MUST still output ALL rows including last-page labour/misc rows.
+  CRITICAL: If this bill has 50-300+ rows, you MUST still output ALL rows including last-page labour/misc rows.
 `;
 
 /**
@@ -264,14 +265,14 @@ export const getWorkshopLeanArraySinglePassPrompt = (): string => `
 /**
  * Lean first-chunk array prompt — gate check + array rows from first page slice.
  */
-export const getWorkshopLeanArrayFirstChunkPrompt = (pageStart: number, pageEnd: number): string => `
-  You are an expert Indian workshop bill OCR assistant — GATE CHECK + ARRAY ROWS for pages ${pageStart}–${pageEnd}.
+export const getWorkshopLeanArrayFirstChunkPrompt = (): string => `
+  You are an expert Indian workshop bill OCR assistant — GATE CHECK + ARRAY ROWS.
 
   ${GATE_BLOCK}
 
   If isCorrectDocumentType is false, return empty arrays and STOP.
 
-  Extract ALL table data rows from pages ${pageStart}–${pageEnd} as array-of-arrays.
+  Extract ALL table data rows from the provided PDF page(s) / slice as array-of-arrays.
   ${ARRAY_COLUMN_SPEC}
   ${TABLE_RULES}
 
@@ -286,15 +287,16 @@ export const getWorkshopLeanArrayFirstChunkPrompt = (pageStart: number, pageEnd:
 /**
  * Chunk array prompt — array-format table rows only (no gate fields).
  */
-export const getWorkshopChunkArrayPrompt = (pageStart: number, pageEnd: number): string => `
-  You are an expert Indian workshop bill OCR assistant — ARRAY TABLE ROWS ONLY for pages ${pageStart}–${pageEnd}.
+export const getWorkshopChunkArrayPrompt = (): string => `
+  You are an expert Indian workshop bill OCR assistant — ARRAY TABLE ROWS ONLY.
 
-  Extract ONLY table data rows visible on pages ${pageStart}–${pageEnd}. No header. No summary. No gate fields.
+  Extract ONLY table data rows visible on the provided PDF page(s) / slice.
+  No header. No summary. No gate fields.
   ${ARRAY_COLUMN_SPEC}
   ${TABLE_RULES}
 
-  • partsTable — all spare/part rows on pages ${pageStart}–${pageEnd}. Use [] if none.
-  • labourTable — all labour/service rows on pages ${pageStart}–${pageEnd}. Use [] if none.
+  • partsTable — all spare/part rows on these pages. Use [] if none.
+  • labourTable — all labour/service/misc rows on these pages. Use [] if none.
   • s (Sr.No) continues from earlier pages — preserve printed values.
   • "Miscellaneous Activity" / HSN 998714 → labourTable. HSN 87xx → partsTable.
   • IMPORTANT: A "Sub Total" / "Spare Sub Total" footer ends the PARTS section only — if a "Labour and Job Work"
@@ -303,19 +305,19 @@ export const getWorkshopChunkArrayPrompt = (pageStart: number, pageEnd: number):
   Return ONLY partsTable and labourTable. Extract EVERY row.
 `;
 
-export const getWorkshopLeanFirstChunkPrompt = (pageStart: number, pageEnd: number): string => `
-  You are an expert Indian workshop bill OCR assistant — GATE CHECK + TABLE ROWS for pages ${pageStart}–${pageEnd}.
+export const getWorkshopLeanFirstChunkPrompt = (): string => `
+  You are an expert Indian workshop bill OCR assistant — GATE CHECK + TABLE ROWS.
 
   ${GATE_BLOCK}
 
   If isCorrectDocumentType is false, return empty tables and STOP.
 
-  Extract ALL table data rows visible on pages ${pageStart}–${pageEnd}.
+  Extract ALL table data rows visible on the provided PDF page(s) / slice.
   ${COLUMN_MAPPING}
   ${TABLE_RULES}
 
-  • partsTable — all spare/part rows on pages ${pageStart}–${pageEnd}. Use [] if none.
-  • labourTable — all labour/service/misc rows on pages ${pageStart}–${pageEnd}. Use [] if none.
+  • partsTable — all spare/part rows on these pages. Use [] if none.
+  • labourTable — all labour/service/misc rows on these pages. Use [] if none.
   • Skip: dealer letterhead, column header row, section titles, subtotal/grand-total footer lines.
   • s (Sr.No) may start at 1 on these pages — preserve printed values.
   • "Miscellaneous Activity" / HSN 998714 → labourTable. HSN 87xx → partsTable.

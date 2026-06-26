@@ -204,7 +204,7 @@ export class WorkshopBillExtractor {
       try {
         const chunk = (await this.callGemini(
           slice.input,
-          getWorkshopChunkPrompt(pageStart, pageEnd),
+          getWorkshopChunkPrompt(),
           WorkshopChunkGeminiSchema,
           chunkTokens,
           `WORKSHOP-CHUNK-${i + 1}`,
@@ -258,12 +258,11 @@ export class WorkshopBillExtractor {
     totalPageCount: number,
   ): number {
     const pagesInChunk = pageIndices.length;
-    if (pagesInChunk <= 1) return 1;
     const isFirstChunk = chunkIndex === 0 && pageIndices[0] === 1;
     const isLastChunk = pageIndices[pageIndices.length - 1] === totalPageCount;
-    if (isFirstChunk) return 3;
-    if (isLastChunk) return Math.max(3, pagesInChunk * 6);
-    return pagesInChunk * 10;
+    if (isFirstChunk) return 3 + (pagesInChunk - 1) * 8;
+    if (isLastChunk) return Math.max(3, pagesInChunk * 5);
+    return pagesInChunk * 8;
   }
 
   /** flash-lite can stop mid-chunk (~16 rows) without throwing — split and retry per page. */
@@ -273,8 +272,30 @@ export class WorkshopBillExtractor {
     chunkIndex: number,
     totalPageCount: number,
   ): boolean {
-    if (pageIndices.length <= 1) return false;
+    if (rowCount === 0) return false;
     return rowCount < this.minRowsForChunk(pageIndices, chunkIndex, totalPageCount);
+  }
+
+  private hasSerialGapsForTable(rows: Record<string, unknown>[]): boolean {
+    const serials: number[] = [];
+    for (const row of rows) {
+      const n = Number(row.srNo);
+      if (Number.isFinite(n) && n > 0) {
+        serials.push(n);
+      }
+    }
+    if (serials.length <= 1) return false;
+
+    const uniqueSerials = Array.from(new Set(serials)).sort((a, b) => a - b);
+    const min = uniqueSerials[0];
+    const max = uniqueSerials[uniqueSerials.length - 1];
+
+    const expectedCount = max - min + 1;
+    return expectedCount > uniqueSerials.length;
+  }
+
+  private hasSerialGaps(parts: Record<string, unknown>[], labour: Record<string, unknown>[]): boolean {
+    return this.hasSerialGapsForTable(parts) || this.hasSerialGapsForTable(labour);
   }
 
   private maxSerialFromRows(rows: Record<string, unknown>[]): number {
@@ -301,10 +322,9 @@ export class WorkshopBillExtractor {
     pageIndices: number[],
     isFirst: boolean,
     cacheSuffix: string,
+    modelOverride?: string,
   ): Promise<LeanChunkExtractResult> {
-    const chunkModel = _config.WORKSHOP_CHUNK_AI_MODEL;
-    const pageStart = pageIndices[0];
-    const pageEnd = pageIndices[pageIndices.length - 1];
+    const chunkModel = modelOverride ?? _config.WORKSHOP_CHUNK_AI_MODEL;
     const chunkTokens = computeWorkshopMaxTokens(
       pageIndices.length,
       _config.WORKSHOP_MAX_OUTPUT_TOKENS,
@@ -315,8 +335,8 @@ export class WorkshopBillExtractor {
       const chunk = (await this.callGemini(
         slice.input,
         isFirst
-          ? getWorkshopLeanArrayFirstChunkPrompt(pageStart, pageEnd)
-          : getWorkshopChunkArrayPrompt(pageStart, pageEnd),
+          ? getWorkshopLeanArrayFirstChunkPrompt()
+          : getWorkshopChunkArrayPrompt(),
         isFirst ? WorkshopLeanArraySchema : WorkshopChunkArraySchema,
         chunkTokens,
         cacheSuffix,
@@ -352,17 +372,54 @@ export class WorkshopBillExtractor {
       `WorkshopBillExtractor: Lean chunk ${chunkIndex + 1} — pages ${pageStart}–${pageEnd}`,
     );
 
-    const initial = await this.runSingleLeanChunkExtract(
+    let initial = await this.runSingleLeanChunkExtract(
       inputData,
       pageIndices,
       isFirst,
       `WORKSHOP-LEAN-CHUNK-${chunkIndex + 1}`,
     );
-    const initialRows = initial.parts.length + initial.labour.length;
+    let initialRows = initial.parts.length + initial.labour.length;
 
-    if (
-      !this.isChunkSoftTruncated(initialRows, pageIndices, chunkIndex, totalPageCount)
-    ) {
+    let isTruncated = this.isChunkSoftTruncated(initialRows, pageIndices, chunkIndex, totalPageCount);
+    if (!isTruncated && this.hasSerialGaps(initial.parts, initial.labour)) {
+      this.obs.warn(
+        `WorkshopBillExtractor: Gap in serial numbers detected on initial chunk ${chunkIndex + 1}. Marking as truncated.`,
+        { parts: initial.parts.length, labour: initial.labour.length }
+      );
+      isTruncated = true;
+    }
+
+    if (!isTruncated) {
+      return initial;
+    }
+
+    // Single-page chunk truncation fallback: retry with the Pro model (WORKSHOP_AI_MODEL)
+    if (pageIndices.length <= 1) {
+      const proModel = _config.WORKSHOP_AI_MODEL;
+      if (proModel && proModel !== _config.WORKSHOP_CHUNK_AI_MODEL) {
+        this.obs.warn(
+          `WorkshopBillExtractor: Single-page chunk ${chunkIndex + 1} (page ${pageStart}) is truncated or has gaps. Retrying with Pro model (${proModel}).`,
+          { rowCount: initialRows }
+        );
+        try {
+          const proResult = await this.runSingleLeanChunkExtract(
+            inputData,
+            pageIndices,
+            isFirst,
+            `WORKSHOP-LEAN-CHUNK-${chunkIndex + 1}-PRO`,
+            proModel,
+          );
+          const proRows = proResult.parts.length + proResult.labour.length;
+          if (proRows > initialRows) {
+            this.obs.info(
+              `WorkshopBillExtractor: Pro model extraction successful — rows increased from ${initialRows} to ${proRows}.`,
+            );
+            return proResult;
+          }
+        } catch (e) {
+          this.obs.warn(`WorkshopBillExtractor: Pro model fallback failed for page ${pageStart}, using initial Lite results`, { error: e });
+        }
+      }
       return initial;
     }
 
@@ -379,12 +436,43 @@ export class WorkshopBillExtractor {
     for (let p = 0; p < pageIndices.length; p++) {
       const singlePage = [pageIndices[p]];
       const pageIsFirst = isFirst && p === 0;
-      const sub = await this.runSingleLeanChunkExtract(
+      let sub = await this.runSingleLeanChunkExtract(
         inputData,
         singlePage,
         pageIsFirst,
         `WORKSHOP-LEAN-CHUNK-${chunkIndex + 1}P${pageIndices[p]}`,
       );
+
+      // If a single page run has serial number gaps or output truncation zones (e.g. >= 15 rows),
+      // we retry it with the Pro model.
+      const subRows = sub.parts.length + sub.labour.length;
+      if (this.hasSerialGaps(sub.parts, sub.labour) || subRows >= 15) {
+        const proModel = _config.WORKSHOP_AI_MODEL;
+        if (proModel && proModel !== _config.WORKSHOP_CHUNK_AI_MODEL) {
+          this.obs.warn(
+            `WorkshopBillExtractor: Single-page run for page ${pageIndices[p]} appears truncated/long (${subRows} rows). Retrying page with Pro model (${proModel}).`,
+          );
+          try {
+            const proSub = await this.runSingleLeanChunkExtract(
+              inputData,
+              singlePage,
+              pageIsFirst,
+              `WORKSHOP-LEAN-CHUNK-${chunkIndex + 1}P${pageIndices[p]}-PRO`,
+              proModel,
+            );
+            const proRows = proSub.parts.length + proSub.labour.length;
+            if (proRows > subRows) {
+              this.obs.info(
+                `WorkshopBillExtractor: Page ${pageIndices[p]} Pro model extraction successful — rows increased from ${subRows} to ${proRows}.`,
+              );
+              sub = proSub;
+            }
+          } catch (e) {
+            this.obs.warn(`WorkshopBillExtractor: Page ${pageIndices[p]} Pro model fallback failed`, { error: e });
+          }
+        }
+      }
+
       if (pageIsFirst) gateRaw = sub.raw;
       mergedParts.push(...sub.parts);
       mergedLabour.push(...sub.labour);

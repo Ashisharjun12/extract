@@ -313,8 +313,34 @@ function fixWrappedSrNoArrayRow(arr: unknown[]): unknown[] {
   return [String(combined), ...arr.slice(2)];
 }
 
+/**
+ * Fix: flash-lite sometimes skips the UOM column (position 4) when UOM is blank,
+ * putting Qty at position 4 and shifting every subsequent column left by one.
+ * This makes position 10 = RowType ("PART") instead of TotalPrice → null prices.
+ *
+ * Detection: position 4 is a pure numeric string (Qty, not UOM) AND position 10
+ * is a known RowType keyword instead of a price number.
+ */
+const KNOWN_ROW_TYPES = new Set(['PART', 'COMBINED', 'LABOUR']);
+
+function fixMissingUomArrayRow(arr: unknown[]): unknown[] {
+  if (arr.length < 11) return arr;
+  const pos4 = String(arr[4] ?? '').trim();
+  const pos10 = String(arr[10] ?? '').trim();
+  // Position 4 looks like a plain number (Qty, not UOM like "NOS"/"KG"/etc.)
+  // AND position 10 is a RowType word → UOM was omitted, columns shifted.
+  const pos4IsNumeric = pos4 !== '' && /^\d+(\.\d+)?$/.test(pos4);
+  const pos10IsRowType = KNOWN_ROW_TYPES.has(pos10);
+  if (pos4IsNumeric && pos10IsRowType) {
+    // Insert empty string at position 4 (UOM) to restore correct alignment.
+    return [...arr.slice(0, 4), '', ...arr.slice(4)];
+  }
+  return arr;
+}
+
 function expandPartsArrayRow(arr: unknown[]): Record<string, unknown> {
-  const fixed = fixWrappedSrNoArrayRow(arr);
+  const afterSrFix = fixWrappedSrNoArrayRow(arr);
+  const fixed = fixMissingUomArrayRow(afterSrFix);
   const row: Record<string, unknown> = {};
   PARTS_ARRAY_KEYS.forEach((k, i) => {
     row[k] = coerceVal(fixed[i], PARTS_NUMERIC_IDX.has(i));

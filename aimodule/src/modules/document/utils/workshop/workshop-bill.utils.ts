@@ -175,10 +175,11 @@ export function normaliseVehicleNo(raw: string | null | undefined): string | nul
 type TableRow = Record<string, unknown>;
 
 function rowDedupeKey(row: TableRow, amountKey: string): string {
+  const srNo = String(row.srNo ?? '').trim();
   const code = String(row.partNumber ?? row.labourCode ?? '').trim();
   const desc = String(row.description ?? '').trim().toLowerCase();
   const amount = row[amountKey];
-  return `${code}|${desc}|${amount}`;
+  return `${srNo}|${code}|${desc}|${amount}`;
 }
 
 /** Merge chunk pass rows and drop obvious duplicates from repeated page headers. */
