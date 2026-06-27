@@ -2,6 +2,8 @@
 export interface AIExecutionMetrics {
   model: string;
   documentType: string;
+  documentName: string;   // e.g. 'vehicle_rc_front.jpg'
+  documentId: string;     // e.g. DB record ID
   jobId: string;
   apiKeyLabel: string;
   callPhase: 'prescreen' | 'extraction';
@@ -27,6 +29,8 @@ export interface AIExecutionMetrics {
 export interface JobCostSummary {
   correlationId: string;
   documentType: string;
+  documentName: string;
+  documentId: string;
   jobId: string;
   apiKeyLabel: string;
   apiCallCount: number;

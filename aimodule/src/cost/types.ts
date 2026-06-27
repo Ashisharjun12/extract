@@ -22,6 +22,8 @@ export interface AICallRecord {
 export interface JobCostSummary {
   correlationId: string;
   documentType: string;
+  documentName: string;   // e.g. 'vehicle_rc_front.jpg'
+  documentId: string;     // e.g. MongoDB / DB record ID
   jobId: string;
   apiKeyLabel: string;
   apiCallCount: number;
@@ -38,6 +40,8 @@ export interface JobCostSummary {
 export interface JobContext {
   correlationId: string;
   documentType: string;
+  documentName: string;   // human-readable file/document name
+  documentId: string;     // DB record / external ID
   jobId: string;
   apiKeyLabel: string;
   cost: {

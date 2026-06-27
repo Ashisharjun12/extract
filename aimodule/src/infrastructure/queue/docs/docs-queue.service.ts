@@ -13,6 +13,8 @@ export { deriveContentJobId };
 
 export interface EnqueueOptions {
   priorityLevel?: JobPriorityLevel;
+  documentName?: string;   // human-readable file/doc name, e.g. 'vehicle_rc_front.jpg'
+  documentId?: string;     // DB record ID from caller (e.g. Laravel document ID)
 }
 
 export interface EnqueueResult {
@@ -83,7 +85,7 @@ export class DocsQueueService {
 
     const job = await queue.add(
       'extract-document',
-      { type, urls, correlationId },
+      { type, urls, correlationId, documentName: options.documentName ?? 'unknown', documentId: options.documentId ?? 'unknown' },
       { priority, jobId: contentJobId },
     );
 

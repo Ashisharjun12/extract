@@ -14,10 +14,14 @@ export function createJobContext(
   correlationId: string,
   documentType: string,
   jobId: string,
+  documentName = 'unknown',
+  documentId = 'unknown',
 ): JobContext {
   return {
     correlationId,
     documentType,
+    documentName,
+    documentId,
     jobId,
     apiKeyLabel: getGeminiApiKeyLabel(),
     cost: {
@@ -36,6 +40,14 @@ export function createJobContext(
 
 export function getDocumentType(): string {
   return correlationStore.getStore()?.documentType ?? 'UNKNOWN';
+}
+
+export function getDocumentName(): string {
+  return correlationStore.getStore()?.documentName ?? 'unknown';
+}
+
+export function getDocumentId(): string {
+  return correlationStore.getStore()?.documentId ?? 'unknown';
 }
 
 export function getJobId(): string {
@@ -69,6 +81,8 @@ export function getJobCostSummary(): JobCostSummary | null {
   return {
     correlationId: store.correlationId,
     documentType: store.documentType,
+    documentName: store.documentName,
+    documentId: store.documentId,
     jobId: store.jobId,
     apiKeyLabel: store.apiKeyLabel,
     apiCallCount: store.cost.apiCallCount,

@@ -7,6 +7,8 @@ import {
 import {
   recordAICall,
   getDocumentType,
+  getDocumentName,
+  getDocumentId,
   getJobId,
   getApiKeyLabel,
 } from './tracker.js';
@@ -34,6 +36,8 @@ export function logGeminiCall(params: LogGeminiCallParams): void {
   const metrics: AIExecutionMetrics = {
     model: params.model,
     documentType: getDocumentType(),
+    documentName: getDocumentName(),
+    documentId: getDocumentId(),
     jobId: getJobId(),
     apiKeyLabel: getApiKeyLabel(),
     callPhase,

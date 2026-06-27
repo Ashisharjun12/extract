@@ -42,6 +42,8 @@ export class NewRelicObserverProvider implements IObserverProvider {
     this.nr.recordCustomEvent('AIExecution', {
       model: metrics.model,
       documentType: metrics.documentType,
+      documentName: metrics.documentName,
+      documentId: metrics.documentId,
       jobId: metrics.jobId,
       apiKeyLabel: metrics.apiKeyLabel,
       callPhase: metrics.callPhase,
@@ -90,6 +92,8 @@ export class NewRelicObserverProvider implements IObserverProvider {
     this.nr.recordCustomEvent('JobCostSummary', {
       correlationId: summary.correlationId,
       documentType: summary.documentType,
+      documentName: summary.documentName,
+      documentId: summary.documentId,
       jobId: summary.jobId,
       apiKeyLabel: summary.apiKeyLabel,
       apiCallCount: summary.apiCallCount,

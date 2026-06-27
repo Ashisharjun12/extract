@@ -36,9 +36,10 @@ export class ExtractionService {
 
     let urls = Array.isArray(directUrls) ? directUrls.filter(Boolean) : [];
     let resolvedUploadIds = [];
+    let uploads = [];
 
     if (uploadIds?.length) {
-      const uploads = await Upload.find({ _id: { $in: uploadIds } });
+      uploads = await Upload.find({ _id: { $in: uploadIds } });
       if (uploads.length !== uploadIds.length) {
         throw ApiError.badRequest('One or more uploadIds were not found.');
       }
@@ -66,9 +67,32 @@ export class ExtractionService {
 
     try {
       const token = signAimoduleToken();
+      const documentId = job._id.toString();
+      let documentName = 'unknown';
+
+      if (uploads && uploads.length > 0) {
+        documentName = uploads[0].originalName;
+        console.log("name..", documentName)
+        console.log("updldo", uploads[0].originalName)
+      } else if (urls.length > 0) {
+        try {
+          const urlObj = new URL(urls[0]);
+          documentName = urlObj.pathname.split('/').pop() || 'unknown';
+        } catch {
+          documentName = urls[0].split('/').pop() || 'unknown';
+        }
+      }
+
       const response = await axios.post(
         `${_config.AIMODULE_URL}/api/v1/documents/extract`,
-        { type, urls, mode: extractMode, priority: extractPriority },
+        {
+          type,
+          urls,
+          mode: extractMode,
+          priority: extractPriority,
+          documentName,
+          documentId,
+        },
         {
           headers: {
             Authorization: `Bearer ${token}`,

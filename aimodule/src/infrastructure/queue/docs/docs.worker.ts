@@ -75,15 +75,18 @@ const sharedWorkerOptions = {
 };
 
 // Job Processor
-// Re-hydrates the correlation context from job data (workers run in a different
-// async context). Fires the webhook after every terminal outcome (success or
-// final failure — not retryable intermediate failures).
+
 const processDocumentJob = async (job: Job): Promise<any> => {
-  const { type, urls, correlationId } = job.data;
+  const { type, urls, correlationId, documentName, documentId } = job.data;
+  console.log("hobdata" , job.data)
   const effectiveCorrelationId = correlationId ?? job.id ?? 'no-context';
+  const effectiveDocumentName = documentName ?? 'unknown';
+  const effectiveDocumentId = documentId ?? 'unknown';
   const startTime = Date.now();
 
-  const runJob = async () => runWithJobContext(effectiveCorrelationId, type, job.id ?? 'unknown', async () => {
+  const runJob = async () => runWithJobContext(
+    effectiveCorrelationId, type, job.id ?? 'unknown',
+    async () => {
     obs.info('Worker starting extraction', { jobId: job.id, type, queue: job.queueName });
 
     const flushJobCost = (status: 'success' | 'failure') => {
@@ -175,7 +178,7 @@ const processDocumentJob = async (job: Job): Promise<any> => {
 
       throw error; // Let BullMQ handle retry / DLQ routing
     }
-  });
+  }, effectiveDocumentName, effectiveDocumentId);
 
   if (!isOtelTracesEnabled()) {
     return runJob();

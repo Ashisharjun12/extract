@@ -49,8 +49,10 @@ export class DocumentController {
   private docsQueueService = new DocsQueueService();
 
   public extractDocument = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-    const { type, urls, mode, priority } = req.body;
+    const { type, urls, mode, priority, documentName, documentId } = req.body;
     const finalUrls = resolveUrls(urls);
+
+    console.log(`[aimodule:controller] Incoming request:`, { type, documentName, documentId });
 
     if (!type || finalUrls.length === 0) {
       res.status(400).json({ success: false, message: 'Document type and URL(s) are required.' });
@@ -69,6 +71,8 @@ export class DocumentController {
     try {
       const enqueueResult = await this.docsQueueService.enqueueDocument(type, finalUrls, {
         priorityLevel,
+        documentName,
+        documentId,
       });
 
       if (enqueueResult.fromCache && enqueueResult.cachedResult != null) {

@@ -2,6 +2,8 @@ import { AsyncLocalStorage } from 'async_hooks';
 import {
   createJobContext,
   getDocumentType,
+  getDocumentName,
+  getDocumentId,
   getJobId,
   getApiKeyLabel,
   recordAICall,
@@ -12,6 +14,8 @@ export type { JobContext, JobCostSummary, AICallPhase, AICallRecord } from '../.
 export {
   createJobContext,
   getDocumentType,
+  getDocumentName,
+  getDocumentId,
   getJobId,
   getApiKeyLabel,
   recordAICall,
@@ -32,8 +36,10 @@ export function runWithJobContext<T>(
   documentType: string,
   jobId: string,
   fn: () => T,
+  documentName = 'unknown',
+  documentId = 'unknown',
 ): T {
-  return correlationStore.run(createJobContext(correlationId, documentType, jobId), fn);
+  return correlationStore.run(createJobContext(correlationId, documentType, jobId, documentName, documentId), fn);
 }
 
 /** Run handler with correlationId only (HTTP middleware path) */
