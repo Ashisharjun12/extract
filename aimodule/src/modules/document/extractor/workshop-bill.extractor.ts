@@ -6,15 +6,12 @@ import {
   WorkshopBillGeminiSchema,
   WorkshopChunkGeminiSchema,
   WorkshopChunkArraySchema,
-  WorkshopLeanGeminiSchema,
   WorkshopLeanArraySchema,
   WorkshopMetaGeminiSchema,
 } from '../schema/workshop/workshop-bill.gemini.schema';
 import {
   getWorkshopChunkPrompt,
   getWorkshopChunkArrayPrompt,
-  getWorkshopLeanFirstChunkPrompt,
-  getWorkshopLeanSinglePassPrompt,
   getWorkshopLeanArraySinglePassPrompt,
   getWorkshopLeanArrayFirstChunkPrompt,
   getWorkshopMetaPrompt,

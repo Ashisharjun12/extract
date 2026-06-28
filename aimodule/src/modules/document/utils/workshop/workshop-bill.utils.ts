@@ -199,6 +199,23 @@ export function mergeWorkshopTableRows<T extends TableRow>(
 }
 
 
+/**
+ * Returns true if all rows in the merged table already have valid, strictly-increasing
+ * serial numbers (i.e. the PDF printed them and they survived chunking intact).
+ * In that case we must NOT touch them — the PDF numbers are canonical.
+ */
+function serialsAreAlreadyContinuous(rows: TableRow[], startSrNo: number): boolean {
+  if (rows.length === 0) return true;
+  let prev = startSrNo; // the serial number that preceded the first row
+  for (const row of rows) {
+    const n = Number(row.srNo);
+    if (!Number.isFinite(n) || n <= 0) return false; // missing serial
+    if (n <= prev) return false;                     // restart or duplicate
+    prev = n;
+  }
+  return true;
+}
+
 export function resequenceTableSerials<T extends TableRow>(
   rows: T[],
   startSrNo = 0,
@@ -219,7 +236,16 @@ export function resequenceTableSerials<T extends TableRow>(
     return rows;
   }
 
-  // Serials exist but may restart per chunk. Walk through and apply an offset
+  // ── NEW ────────────────────────────────────────────────────────────────────
+  // If the PDF already printed continuous, monotonically-increasing serials that
+  // carried through chunking without restarting, leave them completely intact.
+  // Applying an offset would double-count the startSrNo and corrupt the numbers.
+  if (serialsAreAlreadyContinuous(rows, startSrNo)) {
+    return rows;
+  }
+  // ──────────────────────────────────────────────────────────────────────────
+
+  // Serials exist but restart per chunk. Walk through and apply an offset
   // each time we detect a restart (current original ≤ previous original).
   let offset = startSrNo;     // cumulative offset to add to the original serial
   let prevOriginal = 0;       // last seen original serial value from the AI

@@ -211,6 +211,31 @@ function shouldBePartsRow(code: string, sac: string): boolean {
   return false;
 }
 
+/**
+ * Shared-column PDFs (e.g. Maruti/Shakumbari bills) use a single table for both
+ * parts and labour rows. Labour rows in that table have ONLY a "Labor Amount"
+ * value — quantity, unitPrice, and taxableAmount are all blank.
+ *
+ * When the AI puts such a row into partsTable (because the item code appeared in
+ * the "Part Number" column), we detect it here and move it to labourTable.
+ */
+function isLabourOnlyRow(row: unknown): boolean {
+  const r = row as Record<string, unknown>;
+  const qty     = r.q   ?? r.quantity;
+  const price   = r.up  ?? r.unitPrice;
+  const taxable = r.ta  ?? r.taxableAmount;
+  const total   = r.tp  ?? r.totalPrice;
+
+  const hasNoPartsFields =
+    (qty     === null || qty     === undefined || qty     === 0 || qty     === '') &&
+    (price   === null || price   === undefined || price   === 0 || price   === '') &&
+    (taxable === null || taxable === undefined || taxable === 0 || taxable === '');
+
+  const hasAmount = total !== null && total !== undefined && total !== '' && Number(total) > 0;
+
+  return hasNoPartsFields && hasAmount;
+}
+
 function codeFromShortKeyRow(row: unknown): string {
   const r = row as Record<string, unknown>;
   return String(r.pn ?? r.partNumber ?? r.lc ?? r.labourCode ?? '').trim();
@@ -241,7 +266,11 @@ function reclassifyWorkshopShortKeyRows(
   for (const row of rawParts) {
     const code = codeFromShortKeyRow(row);
     const sac = sacFromShortKeyRow(row);
-    if (shouldBeLabourRow(code, sac)) {
+    // Shared-column layout: labour row that landed in partsTable because it
+    // has a code in the "Part Number" column but no parts-specific amounts.
+    if (isLabourOnlyRow(row)) {
+      labourTable.push(row);
+    } else if (shouldBeLabourRow(code, sac)) {
       labourTable.push(row);
     } else {
       partsTable.push(row);
@@ -412,8 +441,27 @@ export function expandWorkshopArrayRows(raw: Record<string, unknown>): Record<st
     const fixed = fixWrappedSrNoArrayRow(row);
     const code = itemCodeFromArrayRow(fixed);
     const sac = sacFromArrayRow(fixed);
-    // SAC 9987xx or Toyota PRT/PNP/EBR/EPR/IBR codes misclassified into partsTable
-    if (shouldBeLabourRow(code, sac)) {
+
+    // Shared-column layout (e.g. Maruti/Shakumbari): labour rows land in partsTable
+    // because the AI sees a code in the "Part Number" column.  Detect them by checking
+    // that parts-specific fields (qty[5], unitPrice[6], taxableAmount[8]) are all blank
+    // while totalPrice[10] has a real positive value.
+    const qty      = fixed[5];
+    const unitPrice = fixed[6];
+    const taxable  = fixed[8];
+    const total    = fixed[10];
+
+    const noPartsFields =
+      (qty      === null || qty      === undefined || qty      === '' || Number(qty)      === 0) &&
+      (unitPrice === null || unitPrice === undefined || unitPrice === '' || Number(unitPrice) === 0) &&
+      (taxable   === null || taxable   === undefined || taxable   === '' || Number(taxable)  === 0);
+    const hasTotal = total !== null && total !== undefined && total !== '' && Number(total) > 0;
+
+    if (noPartsFields && hasTotal) {
+      // Labour-only row masquerading in partsTable — move it to labour.
+      rescuedFromParts.push(fixed);
+    } else if (shouldBeLabourRow(code, sac)) {
+      // SAC 9987xx or Toyota PRT/PNP/EBR/EPR/IBR codes misclassified into partsTable
       rescuedFromParts.push(fixed);
     } else {
       trueParts.push(fixed);
