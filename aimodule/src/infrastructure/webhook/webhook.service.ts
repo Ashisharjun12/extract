@@ -1,6 +1,10 @@
 import { createHmac } from 'crypto';
+import { gzip } from 'zlib';
+import { promisify } from 'util';
 import { _config } from '../../config/config.js';
 import { ObserverService } from '../observabllity/observer.service.js';
+
+const gzipAsync = promisify(gzip);
 
 /**
  * WebhookService
@@ -29,6 +33,8 @@ export interface WebhookPayload {
 
 const MAX_ATTEMPTS = 3;
 const BASE_DELAY_MS = 1000;
+// Compress payload when body exceeds this size to avoid HTTP 413 on large PDFs
+const GZIP_THRESHOLD_BYTES = 50_000; // 50 KB
 
 function sign(body: string): string {
   const secret = _config.WEBHOOK_SECRET ?? '';
@@ -37,6 +43,11 @@ function sign(body: string): string {
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Gzip-compress a string using Node.js built-in zlib. */
+async function gzipBody(data: string): Promise<Buffer> {
+  return gzipAsync(Buffer.from(data, 'utf-8'));
 }
 
 export class WebhookService {
@@ -51,8 +62,30 @@ export class WebhookService {
     const url = _config.WEBHOOK_URL;
     if (!url) return; // webhook not configured — skip silently
 
-    const body = JSON.stringify(payload);
-    const signature = sign(body);
+    const rawBody = JSON.stringify(payload);
+    const signature = sign(rawBody);
+
+    // Compress large payloads (e.g. 400+ row workshop results) to avoid HTTP 413
+    const rawByteLen = Buffer.byteLength(rawBody, 'utf-8');
+    const shouldCompress = rawByteLen > GZIP_THRESHOLD_BYTES;
+    let sendBody: string | Buffer = rawBody;
+    const extraHeaders: Record<string, string> = {};
+
+    if (shouldCompress) {
+      try {
+        sendBody = await gzipBody(rawBody);
+        extraHeaders['Content-Encoding'] = 'gzip';
+        this.obs.info('Webhook: payload compressed with gzip', {
+          originalBytes: rawByteLen,
+          compressedBytes: (sendBody as Buffer).length,
+          jobId: payload.jobId,
+        });
+      } catch (e) {
+        // Fall back to uncompressed on any compression error
+        this.obs.warn('Webhook: gzip compression failed, sending uncompressed', { error: String(e) });
+        sendBody = rawBody;
+      }
+    }
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
@@ -62,8 +95,9 @@ export class WebhookService {
             'Content-Type': 'application/json',
             'X-Webhook-Signature': signature,
             'X-Correlation-Id': payload.correlationId,
+            ...extraHeaders,
           },
-          body,
+          body: sendBody as any,
           signal: AbortSignal.timeout(10_000), // 10s per attempt
         });
 
