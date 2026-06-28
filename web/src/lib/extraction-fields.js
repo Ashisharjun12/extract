@@ -139,9 +139,9 @@ const DL_LICENCE = [
   'dlNumber', 'dlNumberNormalized', 'name', 'dob', 'address', 'state',
 ]
 const DL_VALIDITY = ['issueDate', 'validityNT', 'issuingRto']
-const DL_STATUS   = ['isNTValid', 'isExpired']
+const DL_STATUS = ['isNTValid', 'isExpired']
 const DL_CLASS_COLUMNS = ['vehicleClass', 'issuedOn']
-const DL_QUALITY  = [
+const DL_QUALITY = [
   'isCorrectDocumentType', 'detectedDocumentType', 'hasAllPagesCorrectType',
   'invalidPageIndices', 'confidenceScore', 'requiresHumanReview', 'lowConfidenceFields',
 ]
@@ -153,10 +153,10 @@ const RC_VEHICLE = [
   'seatingCapacity', 'unladenWeight', 'ladenWeight',
   'chassisNo', 'engineNo', 'state',
 ]
-const RC_OWNER     = ['ownerName']
+const RC_OWNER = ['ownerName']
 const RC_AUTHORITY = ['issuingAuthority', 'rtoCode']
-const RC_STATUS    = ['isValid', 'isExpired', 'daysUntilExpiry']
-const RC_QUALITY   = [
+const RC_STATUS = ['isValid', 'isExpired', 'daysUntilExpiry']
+const RC_QUALITY = [
   'isCorrectDocumentType', 'detectedDocumentType', 'hasAllPagesCorrectType',
   'invalidPageIndices', 'confidenceScore', 'requiresHumanReview', 'lowConfidenceFields',
 ]
@@ -186,28 +186,28 @@ const POLICY_IDENTITY = [
   { key: 'policyType', label: 'Policy Type' },
   { key: 'policyCoverage', label: 'Coverage' },
 ]
-const POLICY_INSURER  = [{ key: 'insurerName', label: 'Insurer Name' }]
-const POLICY_INSURED  = [
+const POLICY_INSURER = [{ key: 'insurerName', label: 'Insurer Name' }]
+const POLICY_INSURED = [
   { key: 'insuredName', label: 'Insured Name' },
   { key: 'insuredAddress', label: 'Address' },
 ]
-const POLICY_PERIOD   = [
+const POLICY_PERIOD = [
   { key: 'policyStartDate', label: 'Policy Start Date' },
   { key: 'policyEndDate', label: 'Policy End Date' },
 ]
-const POLICY_VEHICLE  = [
+const POLICY_VEHICLE = [
   { key: 'registrationNo', label: 'Vehicle No.' },
   { key: 'engineNo', label: 'Engine No.' },
   { key: 'chassisNo', label: 'Chassis No.' },
   { key: 'registrationAuthority', label: 'Zone / RTO Code' },
 ]
-const POLICY_IDV      = [{ key: 'totalIdv', label: 'Sum Insured (IDV)' }]
-const POLICY_NCB      = [
+const POLICY_IDV = [{ key: 'totalIdv', label: 'Sum Insured (IDV)' }]
+const POLICY_NCB = [
   { key: 'ncbPercentage', label: 'NCB %' },
   { key: 'grossPremiumPaid', label: 'Premium' },
 ]
-const POLICY_NOMINEE  = [{ key: 'nomineeName', label: 'Nominee Name' }]
-const POLICY_QUALITY  = [
+const POLICY_NOMINEE = [{ key: 'nomineeName', label: 'Nominee Name' }]
+const POLICY_QUALITY = [
   { key: 'isCorrectDocumentType', label: 'Correct document type' },
   { key: 'detectedDocumentType', label: 'Detected type' },
   { key: 'hasAllPagesCorrectType', label: 'All pages correct type' },
@@ -222,7 +222,7 @@ const WORKSHOP_META = [
   'isCorrectDocumentType', 'detectedDocumentType', 'hasAllPagesCorrectType',
   'invalidPageIndices', 'confidenceScore', 'requiresHumanReview',
 ]
-const PARTS_COLUMNS  = [
+const PARTS_COLUMNS = [
   'srNo', 'partNumber', 'hsnSac', 'description', 'uom', 'quantity',
   'unitPrice', 'discount', 'taxableAmount', 'taxAmount', 'totalPrice', 'rowType',
 ]
@@ -274,17 +274,17 @@ export function buildInspectViews(documentType, result) {
   }
 
   const normalizedResult = documentType === 'POLICY' ? normalizePolicyResult(result) : result
-  const allTab  = fieldTab('all', 'All fields', flattenAllFields(normalizedResult))
+  const allTab = fieldTab('all', 'All fields', flattenAllFields(normalizedResult))
   const jsonTab = { id: 'json', label: 'Raw JSON', kind: 'json' }
 
   switch (documentType) {
     case 'DL': {
       const tabs = [
-        fieldTab('licence',  'Licence',       pickFieldRows(result, DL_LICENCE)),
-        fieldTab('validity', 'Validity',      pickFieldRows(result, DL_VALIDITY)),
-        fieldTab('status',   'DL status',     expandNestedRows(result, 'dlStatus', DL_STATUS)),
-        tableTab('classes',  'Vehicle classes', formatTableRows(result.vehicleClasses), DL_CLASS_COLUMNS),
-        fieldTab('quality',  'Quality',       pickFieldRows(result, DL_QUALITY)),
+        fieldTab('licence', 'Licence', pickFieldRows(result, DL_LICENCE)),
+        fieldTab('validity', 'Validity', pickFieldRows(result, DL_VALIDITY)),
+        fieldTab('status', 'DL status', expandNestedRows(result, 'dlStatus', DL_STATUS)),
+        tableTab('classes', 'Vehicle classes', formatTableRows(result.vehicleClasses), DL_CLASS_COLUMNS),
+        fieldTab('quality', 'Quality', pickFieldRows(result, DL_QUALITY)),
         allTab,
         jsonTab,
       ]
@@ -293,11 +293,11 @@ export function buildInspectViews(documentType, result) {
 
     case 'RC': {
       const tabs = [
-        fieldTab('vehicle',   'Vehicle',   pickFieldRows(result, RC_VEHICLE)),
-        fieldTab('owner',     'Owner',     pickFieldRows(result, RC_OWNER)),
+        fieldTab('vehicle', 'Vehicle', pickFieldRows(result, RC_VEHICLE)),
+        fieldTab('owner', 'Owner', pickFieldRows(result, RC_OWNER)),
         fieldTab('authority', 'Authority', pickFieldRows(result, RC_AUTHORITY)),
-        fieldTab('status',    'RC status', expandNestedRows(result, 'rcStatus', RC_STATUS)),
-        fieldTab('quality',   'Quality',   pickFieldRows(result, RC_QUALITY)),
+        fieldTab('status', 'RC status', expandNestedRows(result, 'rcStatus', RC_STATUS)),
+        fieldTab('quality', 'Quality', pickFieldRows(result, RC_QUALITY)),
         allTab,
         jsonTab,
       ].filter(Boolean)
@@ -334,9 +334,9 @@ export function buildInspectViews(documentType, result) {
 
     case 'WORKSHOP': {
       const tabs = [
-        tableTab('parts',  'Parts table',  formatTableRows(result.partsTable),  PARTS_COLUMNS),
+        tableTab('parts', 'Parts table', formatTableRows(result.partsTable), PARTS_COLUMNS),
         tableTab('labour', 'Labour table', formatTableRows(result.labourTable), LABOUR_COLUMNS),
-        fieldTab('quality', 'Quality',     pickFieldRows(result, WORKSHOP_META)),
+        fieldTab('quality', 'Quality', pickFieldRows(result, WORKSHOP_META)),
         extraFieldsTab(result),
         allTab,
         jsonTab,

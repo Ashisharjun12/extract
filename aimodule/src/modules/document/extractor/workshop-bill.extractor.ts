@@ -28,6 +28,7 @@ import {
   normaliseVehicleNo,
   resolveSummaryPartsLabour,
   mergeWorkshopTableRows,
+  resequenceTableSerials,
 } from '../utils/workshop/workshop-bill.utils';
 import {
   buildPageChunks,
@@ -146,7 +147,7 @@ export class WorkshopBillExtractor {
 
     this.obs.info(
       `WorkshopBillExtractor: Chunk fallback — ${pageCount} page(s), ${chunks.length} slice(s), ` +
-        `${chunkSize} pages/chunk (local PDF split)`,
+      `${chunkSize} pages/chunk (local PDF split)`,
     );
 
     const chunkModel = _config.WORKSHOP_CHUNK_AI_MODEL;
@@ -214,12 +215,18 @@ export class WorkshopBillExtractor {
         // Expand short keys immediately so mergeWorkshopTableRows dedup works on full field names.
         // Non-lean chunk fallback uses object format with short keys.
         const expanded = expandWorkshopShortKeys(chunk);
-        if (Array.isArray(expanded.partsTable)) {
-          allParts.push(...(expanded.partsTable as Record<string, unknown>[]));
-        }
-        if (Array.isArray(expanded.labourTable)) {
-          allLabour.push(...(expanded.labourTable as Record<string, unknown>[]));
-        }
+        // Re-sequence this chunk's rows so serial numbers continue from where the
+        // previous chunk left off (handles AI restarting from 1 each chunk).
+        const chunkParts = Array.isArray(expanded.partsTable)
+          ? (expanded.partsTable as Record<string, unknown>[])
+          : [];
+        const chunkLabour = Array.isArray(expanded.labourTable)
+          ? (expanded.labourTable as Record<string, unknown>[])
+          : [];
+        resequenceTableSerials(chunkParts, this.maxSerialFromRows(allParts));
+        resequenceTableSerials(chunkLabour, this.maxSerialFromRows(allLabour));
+        allParts.push(...chunkParts);
+        allLabour.push(...chunkLabour);
       } finally {
         await slice.dispose();
       }
@@ -425,7 +432,7 @@ export class WorkshopBillExtractor {
 
     this.obs.warn(
       `WorkshopBillExtractor: Chunk ${chunkIndex + 1} soft-truncated (${initialRows} rows for ` +
-        `pages ${pageStart}–${pageEnd}) — retrying page-by-page.`,
+      `pages ${pageStart}–${pageEnd}) — retrying page-by-page.`,
       { pageIndices, initialRows },
     );
 
@@ -474,6 +481,10 @@ export class WorkshopBillExtractor {
       }
 
       if (pageIsFirst) gateRaw = sub.raw;
+      // Re-sequence page results so serial numbers continue from where the
+      // previous page left off (handles AI restarting from 1 per page).
+      resequenceTableSerials(sub.parts, this.maxSerialFromRows(mergedParts));
+      resequenceTableSerials(sub.labour, this.maxSerialFromRows(mergedLabour));
       mergedParts.push(...sub.parts);
       mergedLabour.push(...sub.labour);
     }
@@ -492,7 +503,7 @@ export class WorkshopBillExtractor {
 
     this.obs.info(
       `WorkshopBillExtractor: Lean chunk mode — ${pageCount} page(s), ${chunks.length} slice(s), ` +
-        `${chunkSize} pages/chunk, model=${_config.WORKSHOP_CHUNK_AI_MODEL}`,
+      `${chunkSize} pages/chunk, model=${_config.WORKSHOP_CHUNK_AI_MODEL}`,
     );
 
     const allParts: Record<string, unknown>[] = [];
@@ -524,6 +535,10 @@ export class WorkshopBillExtractor {
         });
       }
 
+      // Re-sequence this lean chunk's rows so serial numbers continue from
+      // where the previous chunk left off (handles AI restarting from 1 per chunk).
+      resequenceTableSerials(result.parts, this.maxSerialFromRows(allParts));
+      resequenceTableSerials(result.labour, this.maxSerialFromRows(allLabour));
       allParts.push(...result.parts);
       allLabour.push(...result.labour);
     }
@@ -539,7 +554,7 @@ export class WorkshopBillExtractor {
     if (maxSr > 0 && maxSr > totalRows + 2) {
       this.obs.warn(
         `WorkshopBillExtractor: Sr.No gap after merge — maxSr=${maxSr}, rows=${totalRows}. ` +
-          'Some table rows may be missing; flagging for human review.',
+        'Some table rows may be missing; flagging for human review.',
         { maxSr, totalRows, pageCount },
       );
       if (gateResult) {
@@ -582,8 +597,8 @@ export class WorkshopBillExtractor {
     if (this.shouldUseChunkDirect(pageCount, hasLocalPdf, fallbackEnabled)) {
       this.obs.info(
         `WorkshopBillExtractor: Skipping single-pass — ${pageCount} page(s), ` +
-          `lean=${_config.WORKSHOP_LEAN_MODE}, maxSinglePass=${maxSinglePassPages}. ` +
-          'Running chunk mode directly.',
+        `lean=${_config.WORKSHOP_LEAN_MODE}, maxSinglePass=${maxSinglePassPages}. ` +
+        'Running chunk mode directly.',
       );
       const raw = _config.WORKSHOP_LEAN_MODE
         ? await this.extractChunkFallbackLean(inputData, pageCount)
@@ -598,8 +613,8 @@ export class WorkshopBillExtractor {
       if (this.isSoftTruncated(raw, pageCount) && fallbackEnabled && hasLocalPdf) {
         this.obs.warn(
           `WorkshopBillExtractor: Soft truncation detected on single-pass ` +
-            `(${(Array.isArray(raw.partsTable) ? (raw.partsTable as unknown[]).length : 0) + (Array.isArray(raw.labourTable) ? (raw.labourTable as unknown[]).length : 0)} rows for ${pageCount} pages) — ` +
-            `retrying with chunk fallback.`,
+          `(${(Array.isArray(raw.partsTable) ? (raw.partsTable as unknown[]).length : 0) + (Array.isArray(raw.labourTable) ? (raw.labourTable as unknown[]).length : 0)} rows for ${pageCount} pages) — ` +
+          `retrying with chunk fallback.`,
           { pageCount, chunkSize: _config.WORKSHOP_CHUNK_PAGE_SIZE },
         );
         const retried = _config.WORKSHOP_LEAN_MODE
@@ -639,7 +654,7 @@ export class WorkshopBillExtractor {
 
     this.obs.info(
       `WorkshopBillExtractor: Starting extraction — ${fileCount} file(s), ${pageCount} PDF page(s), ` +
-        `lean=${_config.WORKSHOP_LEAN_MODE}, chunkFallback=${_config.WORKSHOP_CHUNK_FALLBACK_ENABLED}`,
+      `lean=${_config.WORKSHOP_LEAN_MODE}, chunkFallback=${_config.WORKSHOP_CHUNK_FALLBACK_ENABLED}`,
     );
 
     const { raw: rawResult, mode: extractionMode } = await this.extractWithFallback(
@@ -650,6 +665,15 @@ export class WorkshopBillExtractor {
     this.obs.info('WorkshopBillExtractor: Raw extraction complete, validating with Zod schema...');
 
     const parsedResult = this.parseWorkshopResult(rawResult);
+
+    // Final resequencing pass — catches any single-pass restart that the Zod
+    // parse may have altered, or leftover gaps after deduplication.
+    if (Array.isArray(parsedResult.partsTable) && parsedResult.partsTable.length > 0) {
+      resequenceTableSerials(parsedResult.partsTable as Record<string, unknown>[]);
+    }
+    if (Array.isArray(parsedResult.labourTable) && parsedResult.labourTable.length > 0) {
+      resequenceTableSerials(parsedResult.labourTable as Record<string, unknown>[]);
+    }
 
     if (extractionMode === 'single-pass') {
       enforceDocumentTypeGates(parsedResult, {
@@ -679,11 +703,11 @@ export class WorkshopBillExtractor {
         confidence,
         confidence >= 0.3,
         'The uploaded document does not appear to be a Workshop Bill or Invoice. ' +
-          'A valid workshop bill must contain repair parts, labour charges, or at minimum a workshop name and invoice number. ' +
-          'Supported formats: Workshop Estimate, Proforma Invoice, Job Card, or Final Invoice (PDF/image).',
+        'A valid workshop bill must contain repair parts, labour charges, or at minimum a workshop name and invoice number. ' +
+        'Supported formats: Workshop Estimate, Proforma Invoice, Job Card, or Final Invoice (PDF/image).',
         'The uploaded document could not be read. ' +
-          'Please ensure the image is clear and shows the full workshop bill. ' +
-          'Re-upload a higher quality scan or photo.',
+        'Please ensure the image is clear and shows the full workshop bill. ' +
+        'Re-upload a higher quality scan or photo.',
       );
     }
 
@@ -712,9 +736,9 @@ export class WorkshopBillExtractor {
     if (!grandTotalCheck.ok) {
       this.obs.warn(
         `WorkshopBillExtractor: Grand total mismatch — ` +
-          `expected=₹${grandTotalCheck.expected.toFixed(2)}, ` +
-          `actual=₹${grandTotalCheck.actual.toFixed(2)}, ` +
-          `delta=₹${grandTotalCheck.delta.toFixed(2)}. Flagging for human review.`,
+        `expected=₹${grandTotalCheck.expected.toFixed(2)}, ` +
+        `actual=₹${grandTotalCheck.actual.toFixed(2)}, ` +
+        `delta=₹${grandTotalCheck.delta.toFixed(2)}. Flagging for human review.`,
       );
     }
 
@@ -740,13 +764,13 @@ export class WorkshopBillExtractor {
 
     this.obs.info(
       `WorkshopBillExtractor: Extraction successful — ` +
-        `pages=${pageCount}, mode=${extractionMode}, ` +
-        `parts=${parsedResult.partsTable?.length ?? 0}, ` +
-        `labour=${parsedResult.labourTable?.length ?? 0}, ` +
-        `billType=${billType}, ` +
-        `gst=${gstInfo.type}(${gstInfo.rate}%), ` +
-        `grandTotalOk=${grandTotalCheck.ok}, ` +
-        `vehicleState=${vehicleState ?? 'N/A'}`,
+      `pages=${pageCount}, mode=${extractionMode}, ` +
+      `parts=${parsedResult.partsTable?.length ?? 0}, ` +
+      `labour=${parsedResult.labourTable?.length ?? 0}, ` +
+      `billType=${billType}, ` +
+      `gst=${gstInfo.type}(${gstInfo.rate}%), ` +
+      `grandTotalOk=${grandTotalCheck.ok}, ` +
+      `vehicleState=${vehicleState ?? 'N/A'}`,
     );
 
     return mergeDocumentQuality(

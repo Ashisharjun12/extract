@@ -197,3 +197,55 @@ export function mergeWorkshopTableRows<T extends TableRow>(
   }
   return out;
 }
+
+
+export function resequenceTableSerials<T extends TableRow>(
+  rows: T[],
+  startSrNo = 0,
+): T[] {
+  if (rows.length === 0) return rows;
+
+  // Determine whether any row has a valid (positive integer) serial number.
+  const hasAnySerial = rows.some((r) => {
+    const n = Number(r.srNo);
+    return Number.isFinite(n) && n > 0;
+  });
+
+  if (!hasAnySerial) {
+    // No serials at all — generate 1..N from startSrNo.
+    rows.forEach((row, idx) => {
+      (row as Record<string, unknown>).srNo = startSrNo + idx + 1;
+    });
+    return rows;
+  }
+
+  // Serials exist but may restart per chunk. Walk through and apply an offset
+  // each time we detect a restart (current original ≤ previous original).
+  let offset = startSrNo;     // cumulative offset to add to the original serial
+  let prevOriginal = 0;       // last seen original serial value from the AI
+  let counter = startSrNo;   // fallback counter for null/0 rows
+
+  for (const row of rows) {
+    const orig = Number(row.srNo);
+    const valid = Number.isFinite(orig) && orig > 0;
+
+    if (valid) {
+      // Detect a restart: the AI reset serials back to a small number.
+      if (orig <= prevOriginal) {
+        // Offset jumps so that the last assigned number is continued.
+        offset = counter;
+      }
+      const assigned = orig + offset;
+      (row as Record<string, unknown>).srNo = assigned;
+      prevOriginal = orig;
+      counter = assigned;
+    } else {
+      // Null / missing serial — continue the sequence.
+      counter += 1;
+      (row as Record<string, unknown>).srNo = counter;
+      prevOriginal = counter - offset; // keep prevOriginal in "original space"
+    }
+  }
+
+  return rows;
+}

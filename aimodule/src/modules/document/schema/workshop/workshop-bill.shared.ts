@@ -114,18 +114,18 @@ function expandExtraColumn(c: unknown): { key: unknown; value: unknown } {
 function expandPartsRow(row: unknown): Record<string, unknown> {
   const r = row as Record<string, unknown>;
   return {
-    srNo:          r.s   ?? r.srNo,
-    partNumber:    r.pn  ?? r.partNumber,
-    hsnSac:        r.h   ?? r.hsnSac,
-    description:   r.d   ?? r.description,
-    uom:           r.u   ?? r.uom,
-    quantity:      r.q   ?? r.quantity,
-    unitPrice:     r.up  ?? r.unitPrice,
-    discount:      r.dis ?? r.discount,
-    taxableAmount: r.ta  ?? r.taxableAmount,
-    taxAmount:     r.tx  ?? r.taxAmount,
-    totalPrice:    r.tp  ?? r.totalPrice,
-    rowType:       r.rt  ?? r.rowType,
+    srNo: r.s ?? r.srNo,
+    partNumber: r.pn ?? r.partNumber,
+    hsnSac: r.h ?? r.hsnSac,
+    description: r.d ?? r.description,
+    uom: r.u ?? r.uom,
+    quantity: r.q ?? r.quantity,
+    unitPrice: r.up ?? r.unitPrice,
+    discount: r.dis ?? r.discount,
+    taxableAmount: r.ta ?? r.taxableAmount,
+    taxAmount: r.tx ?? r.taxAmount,
+    totalPrice: r.tp ?? r.totalPrice,
+    rowType: r.rt ?? r.rowType,
     extraColumns: Array.isArray(r.ec ?? r.extraColumns)
       ? ((r.ec ?? r.extraColumns) as unknown[]).map(expandExtraColumn)
       : [],
@@ -135,18 +135,18 @@ function expandPartsRow(row: unknown): Record<string, unknown> {
 function expandLabourRow(row: unknown): Record<string, unknown> {
   const r = row as Record<string, unknown>;
   return {
-    srNo:            r.s   ?? r.srNo,
-    labourCode:      r.lc  ?? r.labourCode,
-    hsnSac:          r.h   ?? r.hsnSac,
-    description:     r.d   ?? r.description,
-    quantityOrHours: r.qh  ?? r.quantityOrHours,
-    rate:            r.r   ?? r.rate,
-    grossAmount:     r.ga  ?? r.grossAmount,
-    discount:        r.dis ?? r.discount,
-    taxableAmount:   r.ta  ?? r.taxableAmount,
-    taxAmount:       r.tx  ?? r.taxAmount,
-    totalAmount:     r.tot ?? r.totalAmount,
-    rowType:         r.rt  ?? r.rowType,
+    srNo: r.s ?? r.srNo,
+    labourCode: r.lc ?? r.labourCode,
+    hsnSac: r.h ?? r.hsnSac,
+    description: r.d ?? r.description,
+    quantityOrHours: r.qh ?? r.quantityOrHours,
+    rate: r.r ?? r.rate,
+    grossAmount: r.ga ?? r.grossAmount,
+    discount: r.dis ?? r.discount,
+    taxableAmount: r.ta ?? r.taxableAmount,
+    taxAmount: r.tx ?? r.taxAmount,
+    totalAmount: r.tot ?? r.totalAmount,
+    rowType: r.rt ?? r.rowType,
     extraColumns: Array.isArray(r.ec ?? r.extraColumns)
       ? ((r.ec ?? r.extraColumns) as unknown[]).map(expandExtraColumn)
       : [],
@@ -387,7 +387,7 @@ function expandLabourArrayRow(arr: unknown[]): Record<string, unknown> {
  * (position 2 = hsnSac in both layouts) and expanded with the correct function.
  */
 export function expandWorkshopArrayRows(raw: Record<string, unknown>): Record<string, unknown> {
-  const rawParts  = Array.isArray(raw.partsTable)  ? (raw.partsTable  as unknown[][]) : [];
+  const rawParts = Array.isArray(raw.partsTable) ? (raw.partsTable as unknown[][]) : [];
   const rawLabour = Array.isArray(raw.labourTable) ? (raw.labourTable as unknown[][]) : [];
 
   const rescuedFromLabour: unknown[][] = [];
@@ -420,12 +420,12 @@ export function expandWorkshopArrayRows(raw: Record<string, unknown>): Record<st
     }
   }
 
-  const finalParts  = [...trueParts,  ...rescuedFromLabour];
+  const finalParts = [...trueParts, ...rescuedFromLabour];
   const finalLabour = [...trueLabour, ...rescuedFromParts];
 
   return {
     ...raw,
-    partsTable:  finalParts.map(expandPartsArrayRow),
+    partsTable: finalParts.map(expandPartsArrayRow),
     labourTable: finalLabour.map(expandLabourArrayRow),
   };
 }
