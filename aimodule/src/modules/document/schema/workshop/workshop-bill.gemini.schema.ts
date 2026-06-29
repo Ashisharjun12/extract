@@ -117,51 +117,9 @@ const gateRequired = [
   'requiresHumanReview',
 ];
 
-/** Full single-pass schema */
-export const WorkshopBillGeminiSchema: Schema = {
-  type: Type.OBJECT,
-  properties: {
-    ...documentGateProps,
-    workshopDetails: {
-      type: Type.OBJECT,
-      description: 'Workshop and invoice header details',
-      properties: workshopDetailsProps,
-    },
-    partsTable: {
-      type: Type.ARRAY,
-      description: 'All spare parts / material line items. Use [] if none.',
-      items: partsRowItem,
-    },
-    labourTable: {
-      type: Type.ARRAY,
-      description: 'All labour / service line items. Use [] if none. Hours/rate optional.',
-      items: labourRowItem,
-    },
-    summary: {
-      type: Type.OBJECT,
-      description: 'Printed totals from bill footer — prefer document values over recomputing',
-      properties: summaryProps,
-    },
-    extraFields: {
-      type: Type.ARRAY,
-      nullable: true,
-      description: 'Header/footer fields not mapped above',
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          key: { type: Type.STRING },
-          value: { type: Type.STRING, nullable: true },
-        },
-      },
-    },
-  },
-  required: gateRequired,
-};
-
 /**
  * Lean schema — gate fields + partsTable + labourTable only.
- * Used when WORKSHOP_LEAN_MODE=true. Omits workshopDetails, summary, extraFields
- * to reduce output tokens and eliminate the separate meta pass in chunk fallback.
+ * Omits workshopDetails, summary, extraFields to reduce output tokens.
  */
 export const WorkshopLeanGeminiSchema: Schema = {
   type: Type.OBJECT,
@@ -180,95 +138,6 @@ export const WorkshopLeanGeminiSchema: Schema = {
   },
   required: gateRequired,
 };
-
-/** Multi-pass pass 1 — gate + header + summary (no tables) */
-export const WorkshopMetaGeminiSchema: Schema = {
-  type: Type.OBJECT,
-  properties: {
-    ...documentGateProps,
-    workshopDetails: {
-      type: Type.OBJECT,
-      properties: workshopDetailsProps,
-    },
-    summary: {
-      type: Type.OBJECT,
-      properties: summaryProps,
-    },
-    extraFields: {
-      type: Type.ARRAY,
-      nullable: true,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          key: { type: Type.STRING },
-          value: { type: Type.STRING, nullable: true },
-        },
-      },
-    },
-    tableLayout: {
-      type: Type.STRING,
-      description:
-        'SPLIT = parts on separate pages from labour (Eicher/OEM). ' +
-        'UNIFIED = parts and labour on same page(s) (Maruti job card).',
-    },
-    partsPageIndices: {
-      type: Type.ARRAY,
-      description: '1-indexed PDF pages containing spare parts table rows only',
-      items: { type: Type.NUMBER },
-    },
-    labourPageIndices: {
-      type: Type.ARRAY,
-      description: '1-indexed PDF pages containing labour/service table rows only',
-      items: { type: Type.NUMBER },
-    },
-    skipPageIndices: {
-      type: Type.ARRAY,
-      description: '1-indexed pages with no tables (terms, signatures, bank details only)',
-      items: { type: Type.NUMBER },
-    },
-  },
-  required: gateRequired,
-};
-
-/** Multi-pass pass 2 — parts rows only */
-export const WorkshopPartsGeminiSchema: Schema = {
-  type: Type.OBJECT,
-  properties: {
-    partsTable: {
-      type: Type.ARRAY,
-      description: 'Every spare part row from all pages with Spare Part Details or Parts sections',
-      items: partsRowItem,
-    },
-  },
-  required: ['partsTable'],
-};
-
-/** Multi-pass pass 3 — labour rows only */
-export const WorkshopLabourGeminiSchema: Schema = {
-  type: Type.OBJECT,
-  properties: {
-    labourTable: {
-      type: Type.ARRAY,
-      description: 'Every labour/service row from Labour Details or Labour sections',
-      items: labourRowItem,
-    },
-  },
-  required: ['labourTable'],
-};
-
-// ---------------------------------------------------------------------------
-// Array-of-arrays schemas — eliminate the "JSON key tax" (~85% fewer output
-// tokens).  Each table row is a positional string array, not a keyed object.
-//
-// Parts row [16 positions]:
-//   [0:s, 1:pn, 2:h, 3:d, 4:u, 5:q, 6:up, 7:dis, 8:ta, 9:tx, 10:tp, 11:rt,
-//    12:bt(BillTo), 13:sh(Share%), 14:sgst%, 15:cgst%]
-//
-// Labour row [12 positions]:
-//   [0:s, 1:lc, 2:h, 3:d, 4:qh, 5:r, 6:ga, 7:dis, 8:ta, 9:tx, 10:tot, 11:rt]
-//
-// Missing values → empty string "". Numbers encoded as strings ("960.25").
-// ---------------------------------------------------------------------------
 
 const arrayRow: Schema = {
   type: Type.ARRAY,
@@ -312,20 +181,3 @@ export const WorkshopChunkArraySchema: Schema = {
   required: ['partsTable', 'labourTable'],
 };
 
-/** Chunk fallback — parts + labour rows from a page slice only */
-export const WorkshopChunkGeminiSchema: Schema = {
-  type: Type.OBJECT,
-  properties: {
-    partsTable: {
-      type: Type.ARRAY,
-      description: 'Spare part rows visible on these pages only',
-      items: partsRowItem,
-    },
-    labourTable: {
-      type: Type.ARRAY,
-      description: 'Labour/service rows visible on these pages only',
-      items: labourRowItem,
-    },
-  },
-  required: ['partsTable', 'labourTable'],
-};

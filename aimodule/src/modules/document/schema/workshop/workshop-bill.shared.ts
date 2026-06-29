@@ -24,7 +24,10 @@ export const ExtraFieldSchema = z.object({
 });
 
 export const WorkshopPartsRowSchema = z.object({
-  srNo: workshopNumeric.optional(),
+  /** System row index 1..N for UI display — computed post-extraction, not from AI. */
+  rowIndex: workshopNumeric.optional(),
+  /** Sr.No as printed on the bill; null when the table has no serial column. */
+  srNo: workshopNumeric.nullable().optional(),
   partNumber: z.string().nullable().optional(),
   hsnSac: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
@@ -40,7 +43,8 @@ export const WorkshopPartsRowSchema = z.object({
 });
 
 export const WorkshopLabourRowSchema = z.object({
-  srNo: workshopNumeric.optional(),
+  rowIndex: workshopNumeric.optional(),
+  srNo: workshopNumeric.nullable().optional(),
   labourCode: z.string().nullable().optional(),
   hsnSac: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
@@ -161,8 +165,8 @@ export function expandWorkshopShortKeys(raw: Record<string, unknown>): Record<st
 
   return {
     ...raw,
-    partsTable: partsTable.map(expandPartsRow),
-    labourTable: labourTable.map(expandLabourRow),
+    partsTable: filterHsnSummaryRows(partsTable.map(expandPartsRow)),
+    labourTable: filterHsnSummaryRows(labourTable.map(expandLabourRow)),
   };
 }
 
@@ -199,9 +203,44 @@ function isOemLabourOperationCode(code: string): boolean {
   return /(PRT|PNP|EBR|EPR|IBR)$/i.test(c);
 }
 
-function shouldBeLabourRow(code: string, sac: string): boolean {
+/** Service-line descriptions (Kia/Hyundai R&R, body shop, etc.) — prompt-aligned, code-enforced. */
+function looksLikeLabourDescription(desc: string): boolean {
+  const d = desc.trim();
+  if (!d) return false;
+  return (
+    /\b(R&R|R\s*&\s*R)\b/i.test(d) ||
+    /\bDenting\b/i.test(d) ||
+    /\bBody\s*(?:&|and)\s*Paint\b/i.test(d) ||
+    /\bBody\s*Repair\b/i.test(d) ||
+    /\bWelding\b/i.test(d) ||
+    /\bTinkering\b/i.test(d) ||
+    /\bTowing\b/i.test(d) ||
+    /\bMiscellaneous\s+Activity\b/i.test(d) ||
+    /\b(?:Labou?r|Service)\s+Charges?\b/i.test(d) ||
+    /\bOpening\s*&\s*Fitting\b/i.test(d) ||
+    /\bSpecial\s+Charge\b/i.test(d) ||
+    /,\s*ONE\s+SIDE,\s*R&R\b/i.test(d)
+  );
+}
+
+function looksLikeOemPartNumber(code: string): boolean {
+  const c = code.trim();
+  if (!c) return false;
+  if (/^A-/i.test(c)) return true;
+  if (looksLikeItemCode(c)) return true;
+  const compact = c.replace(/[\s-]/g, '');
+  return /^[A-Z0-9]{6,}$/i.test(compact) && /[A-Za-z]/.test(compact) && /\d/.test(compact);
+}
+
+function shouldBeLabourRow(code: string, sac: string, desc = ''): boolean {
   if (isLabourServiceSac(sac)) return true;
   if (isOemLabourOperationCode(code)) return true;
+  if (looksLikeLabourDescription(desc) && !shouldBePartsRow(code, sac) && !looksLikeOemPartNumber(code)) {
+    return true;
+  }
+  if (looksLikeLabourDescription(desc) && /\b(R&R|R\s*&\s*R)\b/i.test(desc) && !shouldBePartsRow(code, sac)) {
+    return true;
+  }
   return false;
 }
 
@@ -225,15 +264,55 @@ function isLabourOnlyRow(row: unknown): boolean {
   const price   = r.up  ?? r.unitPrice;
   const taxable = r.ta  ?? r.taxableAmount;
   const total   = r.tp  ?? r.totalPrice;
+  const sac     = sacFromShortKeyRow(row);
+
+  const hasNoQtyPrice =
+    (qty     === null || qty     === undefined || qty     === 0 || qty     === '') &&
+    (price   === null || price   === undefined || price   === 0 || price   === '');
+
+  const hasTotal = total !== null && total !== undefined && total !== '' && Number(total) > 0;
+  const hasTaxable = taxable !== null && taxable !== undefined && taxable !== '' && Number(taxable) > 0;
+
+  // Flat labour line (BRAR/Maruti estimate): SAC 9987xx, no qty/rate, taxable or total only
+  if (isLabourServiceSac(sac) && hasNoQtyPrice && (hasTotal || hasTaxable)) {
+    return true;
+  }
 
   const hasNoPartsFields =
-    (qty     === null || qty     === undefined || qty     === 0 || qty     === '') &&
-    (price   === null || price   === undefined || price   === 0 || price   === '') &&
+    hasNoQtyPrice &&
     (taxable === null || taxable === undefined || taxable === 0 || taxable === '');
 
-  const hasAmount = total !== null && total !== undefined && total !== '' && Number(total) > 0;
+  return hasNoPartsFields && hasTotal;
+}
 
-  return hasNoPartsFields && hasAmount;
+/**
+ * Parts-array row that is a flat labour line (SAC 9987xx, no qty/rate, taxable/total present).
+ * BRAR/Mahindra quotations: "Labour :" section with one row, no hours/rate columns.
+ */
+function isFlatLabourPartsArrayRow(fixed: unknown[]): boolean {
+  const sac = sacFromArrayRow(fixed);
+  if (!isLabourServiceSac(sac)) return false;
+
+  const qty = fixed[5];
+  const unitPrice = fixed[6];
+  const hasNoQtyPrice =
+    (qty === null || qty === undefined || qty === '' || Number(qty) === 0) &&
+    (unitPrice === null || unitPrice === undefined || unitPrice === '' || Number(unitPrice) === 0);
+
+  const taxable = fixed[8];
+  const total = fixed[10];
+  const hasAmount =
+    (taxable !== null && taxable !== undefined && taxable !== '' && Number(taxable) > 0) ||
+    (total !== null && total !== undefined && total !== '' && Number(total) > 0);
+
+  if (!hasNoQtyPrice || !hasAmount) return false;
+
+  const desc = String(fixed[3] ?? '').trim();
+  const code = itemCodeFromArrayRow(fixed);
+  const isHsnLen = (s: string) => /^\d{6}$/.test(s) || /^\d{8}$/.test(s);
+  if (desc.length > 2 && !isHsnLen(desc.replace(/\s/g, ''))) return true;
+  if (code && !isHsnLen(code.replace(/\s/g, ''))) return true;
+  return false;
 }
 
 function codeFromShortKeyRow(row: unknown): string {
@@ -264,13 +343,15 @@ function reclassifyWorkshopShortKeyRows(
   }
 
   for (const row of rawParts) {
+    const r = row as Record<string, unknown>;
     const code = codeFromShortKeyRow(row);
     const sac = sacFromShortKeyRow(row);
+    const desc = String(r.d ?? r.description ?? '').trim();
     // Shared-column layout: labour row that landed in partsTable because it
     // has a code in the "Part Number" column but no parts-specific amounts.
     if (isLabourOnlyRow(row)) {
       labourTable.push(row);
-    } else if (shouldBeLabourRow(code, sac)) {
+    } else if (shouldBeLabourRow(code, sac, desc)) {
       labourTable.push(row);
     } else {
       partsTable.push(row);
@@ -319,8 +400,13 @@ function looksLikeItemCode(v: unknown): boolean {
   const s = String(v ?? '').trim();
   if (!s) return false;
   if (/[A-Za-z]/.test(s)) return true;
-  // All-digit part codes exist but are longer than a wrapped Sr.No digit
-  return /^\d{5,}$/.test(s.replace(/\s/g, ''));
+  // Pure-numeric string: must be a real part code, not an HSN code.
+  // HSN codes are typically exactly 6 or 8 digits (e.g. 87082900, 998714).
+  // Exclude those lengths to avoid treating a misaligned HSN column as an item code.
+  const digits = s.replace(/\s/g, '');
+  if (/^\d{6}$/.test(digits) || /^\d{8}$/.test(digits)) return false;
+  // Very long numeric part codes (10+ digits) are valid item codes.
+  return /^\d{10,}$/.test(digits);
 }
 
 /**
@@ -333,13 +419,140 @@ function fixWrappedSrNoArrayRow(arr: unknown[]): unknown[] {
 
   const srNo = String(arr[0] ?? '').trim();
   const next = String(arr[1] ?? '').trim();
-  if (!/^\d{1,2}$/.test(srNo) || !/^\d{1,2}$/.test(next)) return arr;
+  // srNo must be 1–2 digits; next must be exactly ONE digit.
+  // Eicher wrapping pattern: "12" + "6" = 126. The wrapped fragment is always
+  // a single trailing digit. Two-digit values like "10" (Upcountry PC column)
+  // or "36" (right-column Sr.No fragment) are NOT wrapped digit continuations.
+  if (!/^\d{1,2}$/.test(srNo) || !/^\d{1}$/.test(next)) return arr;
 
   const combined = parseInt(`${srNo}${next}`, 10);
   if (combined < 100 || combined > 999) return arr;
   if (!looksLikeItemCode(arr[2])) return arr;
 
+  // EC-2: Upcountry/Volvo — PC column or VO part code means this is not Eicher wrap.
+  if (next === '10') return arr;
+  const thirdCol = String(arr[2] ?? '').trim();
+  if (/^VO\s/i.test(thirdCol)) return arr;
+
   return [String(combined), ...arr.slice(2)];
+}
+
+/**
+ * EC-2: Upcountry/Volvo bills print a "PC" column (always "10") between Sr.No
+ * and Part No. Strip it when the next column is a real item code.
+ */
+function stripPcColumn(arr: unknown[]): unknown[] {
+  if (arr.length < 3) return arr;
+  if (String(arr[1] ?? '').trim() !== '10') return arr;
+  const thirdCol = String(arr[2] ?? '').trim();
+  if (/^VO\s/i.test(thirdCol) || looksLikeItemCode(arr[2])) {
+    return [arr[0], ...arr.slice(2)];
+  }
+  return arr;
+}
+
+/** HSN-wise tax summary rows leaked into parts/labour (EC-3). */
+function isHsnSummaryRow(row: Record<string, unknown>): boolean {
+  const code = String(row.partNumber ?? row.labourCode ?? '').trim();
+  const hsn = String(row.hsnSac ?? '').trim();
+  const desc = String(row.description ?? '').trim();
+  const digits = (s: string) => s.replace(/\s/g, '');
+  const isHsnLen = (s: string) => /^\d{6}$/.test(s) || /^\d{8}$/.test(s);
+
+  const qty = row.quantity ?? row.quantityOrHours;
+  const price = row.unitPrice ?? row.rate;
+  const noQty = qty === null || qty === undefined || qty === '' || Number(qty) === 0;
+  const noPrice = price === null || price === undefined || price === '' || Number(price) === 0;
+  if (!noQty || !noPrice) return false;
+
+  const normCode = normalizeSac(code);
+  const normHsn = normalizeSac(hsn);
+  const effectiveHsn = isHsnLen(normHsn) ? normHsn : (isHsnLen(normCode) ? normCode : '');
+  if (!effectiveHsn) return false;
+
+  const descEmptyOrHsn =
+    !desc ||
+    desc === hsn ||
+    desc === code ||
+    isHsnLen(digits(desc));
+
+  // Pattern A: code and hsnSac both set, equal, no line-item description
+  if (isHsnLen(normCode) && normCode === normHsn && descEmptyOrHsn) {
+    return true;
+  }
+
+  // Pattern B: hsnSac only — no real part/labour code
+  if (!code && descEmptyOrHsn) {
+    return true;
+  }
+
+  // Pattern C: HSN misplaced in partNumber/labourCode, hsnSac blank (Volvo pages 10–11)
+  if (
+    isHsnLen(normCode) &&
+    !looksLikeItemCode(code) &&
+    (!hsn || normCode === normHsn) &&
+    descEmptyOrHsn
+  ) {
+    return true;
+  }
+
+  // Pattern D: SAC aggregation row — labourCode IS the SAC (998714) with no task description
+  // Real labour lines have a distinct operation code (81801-2) or a description; not code === sac only.
+  if (
+    isLabourServiceSac(normHsn || normCode) &&
+    normCode === normHsn &&
+    normCode !== '' &&
+    descEmptyOrHsn
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/** Drop HSN summary rows before cross-table rescue (array format). */
+function isHsnSummaryArrayRow(fixed: unknown[], forLabour: boolean): boolean {
+  const code = itemCodeFromArrayRow(fixed);
+  const sac = sacFromArrayRow(fixed);
+  const desc = String(fixed[3] ?? '').trim();
+  const qty = forLabour ? fixed[4] : fixed[5];
+  const price = forLabour ? fixed[5] : fixed[6];
+  return isHsnSummaryRow({
+    partNumber: code,
+    labourCode: code,
+    hsnSac: sac || (isHsnLenDigits(code) ? code : null),
+    description: desc || null,
+    quantity: qty,
+    unitPrice: price,
+    quantityOrHours: qty,
+    rate: price,
+  });
+}
+
+function isHsnLenDigits(s: string): boolean {
+  const d = s.replace(/\s/g, '');
+  return /^\d{6}$/.test(d) || /^\d{8}$/.test(d);
+}
+
+function filterHsnSummaryRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  return rows.filter((row) => !isHsnSummaryRow(row));
+}
+
+/**
+ * When AI merges Part No into the description cell, split col[3] back into col[1] + col[3].
+ * e.g. "ADHESIVE Local Spare Part Consumable-SEALENT" → pn=ADHESIVE, d=rest.
+ */
+function rescuePartCodeColumn(arr: unknown[]): unknown[] {
+  if (arr.length < 4) return arr;
+  const col1 = String(arr[1] ?? '').trim();
+  if (col1) return arr;
+
+  const col3 = String(arr[3] ?? '').trim();
+  const merged = col3.match(/^([A-Z][A-Z0-9]{2,20})\s+(.+)$/);
+  if (merged && !/^\d{6,8}$/.test(merged[1].replace(/\s/g, ''))) {
+    return [arr[0], merged[1], arr[2], merged[2], ...arr.slice(4)];
+  }
+  return arr;
 }
 
 /**
@@ -368,7 +581,9 @@ function fixMissingUomArrayRow(arr: unknown[]): unknown[] {
 }
 
 function expandPartsArrayRow(arr: unknown[]): Record<string, unknown> {
-  const afterSrFix = fixWrappedSrNoArrayRow(arr);
+  const afterPc = stripPcColumn(arr);
+  const afterCode = rescuePartCodeColumn(afterPc);
+  const afterSrFix = fixWrappedSrNoArrayRow(afterCode);
   const fixed = fixMissingUomArrayRow(afterSrFix);
   const row: Record<string, unknown> = {};
   PARTS_ARRAY_KEYS.forEach((k, i) => {
@@ -391,8 +606,34 @@ function expandPartsArrayRow(arr: unknown[]): Record<string, unknown> {
   return row;
 }
 
+/**
+ * Parts-array layout uses UOM at [4], Qty at [5], Rate at [6].
+ * Labour-array layout uses Qty at [4], Rate at [5], Gross at [6].
+ * When rescuing a misrouted row from partsTable, remap before labour expansion.
+ */
+function remapPartsArrayRowToLabourArray(fixed: unknown[]): unknown[] {
+  const col4 = String(fixed[4] ?? '').trim();
+  const col4IsQty = col4 !== '' && /^\d+(\.\d+)?$/.test(col4);
+
+  if (col4IsQty) {
+    return [
+      fixed[0], fixed[1], fixed[2], fixed[3],
+      fixed[4], fixed[5], fixed[6] ?? '',
+      fixed[7], fixed[8], fixed[9], fixed[10], fixed[11] ?? '',
+    ];
+  }
+
+  return [
+    fixed[0], fixed[1], fixed[2], fixed[3],
+    fixed[5], fixed[6], '',
+    fixed[7], fixed[8], fixed[9], fixed[10], fixed[11] ?? '',
+  ];
+}
+
 function expandLabourArrayRow(arr: unknown[]): Record<string, unknown> {
-  const fixed = fixWrappedSrNoArrayRow(arr);
+  const afterPc = stripPcColumn(arr);
+  const afterCode = rescuePartCodeColumn(afterPc);
+  const fixed = fixWrappedSrNoArrayRow(afterCode);
   const row: Record<string, unknown> = {};
   LABOUR_ARRAY_KEYS.forEach((k, i) => {
     row[k] = coerceVal(fixed[i], LABOUR_NUMERIC_IDX.has(i));
@@ -423,11 +664,15 @@ export function expandWorkshopArrayRows(raw: Record<string, unknown>): Record<st
   const trueLabour: unknown[][] = [];
 
   for (const row of rawLabour) {
-    const fixed = fixWrappedSrNoArrayRow(row);
+    const stripped = stripPcColumn(row);
+    const withCode = rescuePartCodeColumn(stripped);
+    const fixed = fixWrappedSrNoArrayRow(withCode);
+    if (isHsnSummaryArrayRow(fixed, true)) continue;
     const code = itemCodeFromArrayRow(fixed);
     const sac = sacFromArrayRow(fixed);
-    // HSN 87xx / A-xxx parts misclassified into labourTable
-    if (shouldBePartsRow(code, sac) && !shouldBeLabourRow(code, sac)) {
+    const rowType = String(fixed[11] ?? '').toUpperCase().trim();
+    // HSN 87xx / A-xxx parts misclassified into labourTable, or AI explicitly tagged PART
+    if ((shouldBePartsRow(code, sac) && !shouldBeLabourRow(code, sac)) || rowType === 'PART') {
       rescuedFromLabour.push(fixed);
     } else {
       trueLabour.push(fixed);
@@ -438,9 +683,14 @@ export function expandWorkshopArrayRows(raw: Record<string, unknown>): Record<st
   const trueParts: unknown[][] = [];
 
   for (const row of rawParts) {
-    const fixed = fixWrappedSrNoArrayRow(row);
+    const stripped = stripPcColumn(row);
+    const withCode = rescuePartCodeColumn(stripped);
+    const fixed = fixWrappedSrNoArrayRow(withCode);
+    if (isHsnSummaryArrayRow(fixed, false)) continue;
     const code = itemCodeFromArrayRow(fixed);
     const sac = sacFromArrayRow(fixed);
+    const desc = String(fixed[3] ?? '').trim();
+    const rowType = String(fixed[11] ?? '').toUpperCase().trim();
 
     // Shared-column layout (e.g. Maruti/Shakumbari): labour rows land in partsTable
     // because the AI sees a code in the "Part Number" column.  Detect them by checking
@@ -457,24 +707,26 @@ export function expandWorkshopArrayRows(raw: Record<string, unknown>): Record<st
       (taxable   === null || taxable   === undefined || taxable   === '' || Number(taxable)  === 0);
     const hasTotal = total !== null && total !== undefined && total !== '' && Number(total) > 0;
 
-    if (noPartsFields && hasTotal) {
-      // Labour-only row masquerading in partsTable — move it to labour.
-      rescuedFromParts.push(fixed);
-    } else if (shouldBeLabourRow(code, sac)) {
-      // SAC 9987xx or Toyota PRT/PNP/EBR/EPR/IBR codes misclassified into partsTable
-      rescuedFromParts.push(fixed);
+    if (
+      (noPartsFields && hasTotal) ||
+      shouldBeLabourRow(code, sac, desc) ||
+      rowType === 'LABOUR' ||
+      isFlatLabourPartsArrayRow(fixed)
+    ) {
+      // Rescue: labour-only row, SAC 9987xx/OEM code, description-based (Kia R&R), or rt=LABOUR
+      rescuedFromParts.push(remapPartsArrayRowToLabourArray(fixed));
     } else {
       trueParts.push(fixed);
     }
   }
 
-  const finalParts = [...trueParts, ...rescuedFromLabour];
-  const finalLabour = [...trueLabour, ...rescuedFromParts];
+  const finalParts = filterHsnSummaryRows([...trueParts, ...rescuedFromLabour].map(expandPartsArrayRow));
+  const finalLabour = filterHsnSummaryRows([...trueLabour, ...rescuedFromParts].map(expandLabourArrayRow));
 
   return {
     ...raw,
-    partsTable: finalParts.map(expandPartsArrayRow),
-    labourTable: finalLabour.map(expandLabourArrayRow),
+    partsTable: finalParts,
+    labourTable: finalLabour,
   };
 }
 

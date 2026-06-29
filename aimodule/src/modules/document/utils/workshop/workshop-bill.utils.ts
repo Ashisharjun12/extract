@@ -200,20 +200,97 @@ export function mergeWorkshopTableRows<T extends TableRow>(
 
 
 /**
- * Returns true if all rows in the merged table already have valid, strictly-increasing
- * serial numbers (i.e. the PDF printed them and they survived chunking intact).
- * In that case we must NOT touch them — the PDF numbers are canonical.
+ * Upcountry/Volvo dual-column invoices interleave two Sr.No series in one list
+ * (e.g. 1, 101, 2, 102, 3, 103). Offset-based resequencing snowballs these
+ * into thousands — detect and handle separately.
+ */
+function hasInterleavedDualSeries(rows: TableRow[]): boolean {
+  const serials = rows
+    .map((r) => Number(r.srNo))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  if (serials.length < 4) return false;
+
+  let patternHits = 0;
+  for (let i = 1; i < serials.length; i++) {
+    const prev = serials[i - 1];
+    const curr = serials[i];
+    // High series then drop to low: 101 → 2
+    if (prev >= 50 && curr < prev && curr <= 100 && prev - curr >= 40) {
+      patternHits++;
+    }
+    // Low series then jump to high: 5 → 105
+    if (prev <= 100 && curr > prev + 40 && curr >= 100) {
+      patternHits++;
+    }
+  }
+  return patternHits >= 2;
+}
+
+/**
+ * Returns true if all rows already have valid, strictly-increasing serial numbers
+ * that continued from startSrNo without chunk restarts.
  */
 function serialsAreAlreadyContinuous(rows: TableRow[], startSrNo: number): boolean {
   if (rows.length === 0) return true;
-  let prev = startSrNo; // the serial number that preceded the first row
+  let prev = startSrNo;
   for (const row of rows) {
     const n = Number(row.srNo);
-    if (!Number.isFinite(n) || n <= 0) return false; // missing serial
-    if (n <= prev) return false;                     // restart or duplicate
+    if (!Number.isFinite(n) || n <= 0) return false;
+    if (n <= prev) return false;
     prev = n;
   }
   return true;
+}
+
+/**
+ * True when the AI reset Sr.No to 1..5 on a new chunk while the merged table
+ * had already advanced well past that — NOT when the PDF prints a new section
+ * (e.g. labour block at 90, or dual-series 1/101 interleave).
+ */
+function looksLikeAiChunkRestart(rows: TableRow[], startSrNo: number): boolean {
+  if (startSrNo <= 0 || rows.length === 0) return false;
+
+  const serials = rows
+    .map((r) => Number(r.srNo))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  if (serials.length === 0) return false;
+
+  const first = serials[0];
+  const min = Math.min(...serials);
+
+  // Legitimate PDF section serials (labour 90+, parts 50+, etc.) — preserve as printed.
+  if (min > 10) return false;
+
+  // Chunk opens at 1..5 while prior merged rows already advanced beyond that range.
+  return min <= 5 && first <= 5 && startSrNo > min + 10;
+}
+
+/**
+ * Assign system rowIndex 1..N for UI. Preserve printed srNo when the bill has a
+ * serial column; set srNo to null when no row has a printed serial.
+ */
+export function assignTableRowIndexes<T extends TableRow>(rows: T[]): T[] {
+  if (rows.length === 0) return rows;
+
+  const hasPrintedSerial = rows.some((r) => {
+    const n = Number(r.srNo);
+    return Number.isFinite(n) && n > 0;
+  });
+
+  rows.forEach((row, idx) => {
+    const rec = row as Record<string, unknown>;
+    rec.rowIndex = idx + 1;
+    if (!hasPrintedSerial) {
+      rec.srNo = null;
+    } else {
+      const n = Number(rec.srNo);
+      if (!Number.isFinite(n) || n <= 0) {
+        rec.srNo = null;
+      }
+    }
+  });
+
+  return rows;
 }
 
 export function resequenceTableSerials<T extends TableRow>(
@@ -222,43 +299,41 @@ export function resequenceTableSerials<T extends TableRow>(
 ): T[] {
   if (rows.length === 0) return rows;
 
-  // Determine whether any row has a valid (positive integer) serial number.
   const hasAnySerial = rows.some((r) => {
     const n = Number(r.srNo);
     return Number.isFinite(n) && n > 0;
   });
 
   if (!hasAnySerial) {
-    // No serials at all — generate 1..N from startSrNo.
-    rows.forEach((row, idx) => {
-      (row as Record<string, unknown>).srNo = startSrNo + idx + 1;
-    });
     return rows;
   }
 
-  // ── NEW ────────────────────────────────────────────────────────────────────
-  // If the PDF already printed continuous, monotonically-increasing serials that
-  // carried through chunking without restarting, leave them completely intact.
-  // Applying an offset would double-count the startSrNo and corrupt the numbers.
+  // Dual-series interleave (1, 101, 2, 102…) — preserve printed Sr.No as-is.
+  if (hasInterleavedDualSeries(rows)) {
+    return rows;
+  }
+
   if (serialsAreAlreadyContinuous(rows, startSrNo)) {
     return rows;
   }
-  // ──────────────────────────────────────────────────────────────────────────
 
-  // Serials exist but restart per chunk. Walk through and apply an offset
-  // each time we detect a restart (current original ≤ previous original).
-  let offset = startSrNo;     // cumulative offset to add to the original serial
-  let prevOriginal = 0;       // last seen original serial value from the AI
-  let counter = startSrNo;   // fallback counter for null/0 rows
+  // Default: preserve PDF-printed serials (e.g. labour 90–172 after parts 1–100).
+  // Only apply offset when the AI clearly restarted numbering at 1..5 per chunk.
+  if (!looksLikeAiChunkRestart(rows, startSrNo)) {
+    return rows;
+  }
+
+  // AI chunk restart — walk through and apply an offset each time serial resets.
+  let offset = startSrNo;
+  let prevOriginal = 0;
+  let counter = startSrNo;
 
   for (const row of rows) {
     const orig = Number(row.srNo);
     const valid = Number.isFinite(orig) && orig > 0;
 
     if (valid) {
-      // Detect a restart: the AI reset serials back to a small number.
       if (orig <= prevOriginal) {
-        // Offset jumps so that the last assigned number is continued.
         offset = counter;
       }
       const assigned = orig + offset;
@@ -266,10 +341,9 @@ export function resequenceTableSerials<T extends TableRow>(
       prevOriginal = orig;
       counter = assigned;
     } else {
-      // Null / missing serial — continue the sequence.
       counter += 1;
       (row as Record<string, unknown>).srNo = counter;
-      prevOriginal = counter - offset; // keep prevOriginal in "original space"
+      prevOriginal = counter - offset;
     }
   }
 

@@ -114,10 +114,7 @@ const {
   RESULT_CACHE_TTL_SECONDS,
   DEFAULT_EXTRACT_MODE,
   WORKSHOP_MULTIPASS_PAGE_THRESHOLD,
-  WORKSHOP_CHUNK_FALLBACK_ENABLED,
   WORKSHOP_CHUNK_PAGE_SIZE,
-  WORKSHOP_LEAN_MODE,
-  WORKSHOP_SINGLE_PASS_MAX_PAGES,
   WORKSHOP_MAX_GEMINI_RETRIES,
   POLICY_MULTIPASS_PAGE_THRESHOLD,
   POLICY_MULTIPASS_FALLBACK_ENABLED,
@@ -167,22 +164,8 @@ export const _config = {
   POLICY_MAX_OUTPUT_TOKENS,
   /** @deprecated Unused — workshop always tries single-pass first. */
   WORKSHOP_MULTIPASS_PAGE_THRESHOLD: parseEnvInt(WORKSHOP_MULTIPASS_PAGE_THRESHOLD, 15),
-  /** After single-pass truncation, slice PDF locally and extract per chunk (default true). */
-  WORKSHOP_CHUNK_FALLBACK_ENABLED: WORKSHOP_CHUNK_FALLBACK_ENABLED ?? 'true',
-  /** Pages per local PDF slice when chunk fallback runs (default 2). */
+  /** Pages per local PDF slice when extracting per chunk (default 2). */
   WORKSHOP_CHUNK_PAGE_SIZE: parseEnvInt(WORKSHOP_CHUNK_PAGE_SIZE, 2),
-  /**
-   * Max pages for single-pass when lean mode is off. With WORKSHOP_LEAN_MODE=true, any
-   * multi-page PDF (2+) uses chunk mode directly — single-pass is 1-page bills only.
-   * Default 1.
-   */
-  WORKSHOP_SINGLE_PASS_MAX_PAGES: parseEnvInt(WORKSHOP_SINGLE_PASS_MAX_PAGES, 1),
-  /**
-   * Lean extraction mode — extracts ONLY partsTable + labourTable (no workshopDetails, summary).
-   * Saves ~1 API call on large bills by skipping the meta pass in chunk fallback.
-   * Default false (full extraction).
-   */
-  WORKSHOP_LEAN_MODE: WORKSHOP_LEAN_MODE === 'true',
   /** Gemini retries per workshop call — 1 avoids 3× cost on transient errors (default 1). */
   WORKSHOP_MAX_GEMINI_RETRIES: parseEnvInt(WORKSHOP_MAX_GEMINI_RETRIES, 1),
   /** @deprecated Unused — policy always tries single-pass first. */

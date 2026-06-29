@@ -3,19 +3,12 @@ import { AIService } from '../../../infrastructure/ai/ai.service';
 import { UnrecoverableDocumentError } from '../../../shared/errors/document.errors.js';
 import { WorkshopBillSchema } from '../schema/workshop/workshop-bill.schema';
 import {
-  WorkshopBillGeminiSchema,
-  WorkshopChunkGeminiSchema,
   WorkshopChunkArraySchema,
   WorkshopLeanArraySchema,
-  WorkshopMetaGeminiSchema,
 } from '../schema/workshop/workshop-bill.gemini.schema';
 import {
-  getWorkshopChunkPrompt,
   getWorkshopChunkArrayPrompt,
-  getWorkshopLeanArraySinglePassPrompt,
   getWorkshopLeanArrayFirstChunkPrompt,
-  getWorkshopMetaPrompt,
-  getWorkshopSinglePassPrompt,
 } from '../prompts/workshop-bill.prompt';
 import {
   normaliseGst,
@@ -26,11 +19,11 @@ import {
   resolveSummaryPartsLabour,
   mergeWorkshopTableRows,
   resequenceTableSerials,
+  assignTableRowIndexes,
 } from '../utils/workshop/workshop-bill.utils';
 import {
   buildPageChunks,
   buildSliceInput,
-  getPrimaryFileInput,
 } from '../utils/workshop/workshop-pdf-slice.util.js';
 import { ObserverService } from '../../../infrastructure/observabllity/observer.service.js';
 import {
@@ -49,10 +42,7 @@ import {
   expandWorkshopShortKeys,
   expandWorkshopArrayRows,
   isArrayRowFormat,
-  isWorkshopTruncationError,
 } from '../schema/workshop/workshop-bill.shared.js';
-
-type ExtractionMode = 'single-pass' | 'chunk-fallback';
 
 type WorkshopRawResult = Record<string, unknown>;
 
@@ -117,144 +107,6 @@ export class WorkshopBillExtractor {
     );
   }
 
-  private async extractSinglePass(inputData: unknown, pageCount: number): Promise<WorkshopRawResult> {
-    const lean = _config.WORKSHOP_LEAN_MODE;
-    const maxTokens = computeWorkshopMaxTokens(pageCount, _config.WORKSHOP_MAX_OUTPUT_TOKENS);
-
-    this.obs.info(
-      `WorkshopBillExtractor: Single-pass mode — ${pageCount} page(s), maxOutputTokens=${maxTokens}, lean=${lean}`,
-    );
-
-    // Lean mode: array-of-arrays output (~85% fewer tokens) on the chunk model
-    const model = lean ? _config.WORKSHOP_CHUNK_AI_MODEL : undefined;
-    return (await this.callGemini(
-      inputData,
-      lean ? getWorkshopLeanArraySinglePassPrompt() : getWorkshopSinglePassPrompt(),
-      lean ? WorkshopLeanArraySchema : WorkshopBillGeminiSchema,
-      maxTokens,
-      'WORKSHOP',
-      model,
-    )) as WorkshopRawResult;
-  }
-
-  /** Local PDF slice per chunk — avoids billing full PDF input on every call. */
-  private async extractChunkFallback(inputData: unknown, pageCount: number): Promise<WorkshopRawResult> {
-    const chunkSize = _config.WORKSHOP_CHUNK_PAGE_SIZE;
-    const chunks = buildPageChunks(pageCount, chunkSize);
-
-    this.obs.info(
-      `WorkshopBillExtractor: Chunk fallback — ${pageCount} page(s), ${chunks.length} slice(s), ` +
-      `${chunkSize} pages/chunk (local PDF split)`,
-    );
-
-    const chunkModel = _config.WORKSHOP_CHUNK_AI_MODEL;
-    const metaTokens = Math.min(
-      16384,
-      computeWorkshopMaxTokens(1, _config.WORKSHOP_MAX_OUTPUT_TOKENS),
-    );
-    const metaSlice = await buildSliceInput(inputData, [1], 'meta');
-
-    this.obs.info(
-      `WorkshopBillExtractor: Chunk fallback using model=${chunkModel} for meta+chunks`,
-    );
-
-    let meta: WorkshopRawResult;
-    try {
-      meta = (await this.callGemini(
-        metaSlice.input,
-        getWorkshopMetaPrompt(),
-        WorkshopMetaGeminiSchema,
-        metaTokens,
-        'WORKSHOP-META',
-        chunkModel,
-      )) as WorkshopRawResult;
-    } finally {
-      await metaSlice.dispose();
-    }
-
-    enforceDocumentTypeGates(meta, {
-      extractorName: 'WorkshopBillExtractor',
-      wrongTypeMessage: (typeStr) =>
-        `The uploaded document appears to be a "${typeStr}", not a Workshop Bill. ` +
-        'Please upload a valid repair/service bill, proforma estimate, or job card.',
-      mixedBatchMessage: (pageList) =>
-        `Mixed document batch detected for Workshop Bill extraction. ${pageList} ` +
-        'Please ensure all uploaded pages belong to the same workshop bill or repair estimate.',
-    });
-
-    const allParts: Record<string, unknown>[] = [];
-    const allLabour: Record<string, unknown>[] = [];
-
-    for (let i = 0; i < chunks.length; i++) {
-      const pageIndices = chunks[i];
-      const pageStart = pageIndices[0];
-      const pageEnd = pageIndices[pageIndices.length - 1];
-      const chunkTokens = computeWorkshopMaxTokens(
-        pageIndices.length,
-        _config.WORKSHOP_MAX_OUTPUT_TOKENS,
-      );
-
-      this.obs.info(
-        `WorkshopBillExtractor: Chunk ${i + 1}/${chunks.length} — pages ${pageStart}–${pageEnd}`,
-      );
-
-      const slice = await buildSliceInput(inputData, pageIndices, `chunk-${i + 1}`);
-      try {
-        const chunk = (await this.callGemini(
-          slice.input,
-          getWorkshopChunkPrompt(),
-          WorkshopChunkGeminiSchema,
-          chunkTokens,
-          `WORKSHOP-CHUNK-${i + 1}`,
-          chunkModel,
-        )) as WorkshopRawResult;
-
-        // Expand short keys immediately so mergeWorkshopTableRows dedup works on full field names.
-        // Non-lean chunk fallback uses object format with short keys.
-        const expanded = expandWorkshopShortKeys(chunk);
-        // Re-sequence this chunk's rows so serial numbers continue from where the
-        // previous chunk left off (handles AI restarting from 1 each chunk).
-        const chunkParts = Array.isArray(expanded.partsTable)
-          ? (expanded.partsTable as Record<string, unknown>[])
-          : [];
-        const chunkLabour = Array.isArray(expanded.labourTable)
-          ? (expanded.labourTable as Record<string, unknown>[])
-          : [];
-        resequenceTableSerials(chunkParts, this.maxSerialFromRows(allParts));
-        resequenceTableSerials(chunkLabour, this.maxSerialFromRows(allLabour));
-        allParts.push(...chunkParts);
-        allLabour.push(...chunkLabour);
-      } finally {
-        await slice.dispose();
-      }
-    }
-
-    return {
-      ...meta,
-      partsTable: mergeWorkshopTableRows(allParts, 'totalPrice'),
-      labourTable: mergeWorkshopTableRows(allLabour, 'totalAmount'),
-    };
-  }
-
-  private countTableRows(raw: WorkshopRawResult): number {
-    const parts = Array.isArray(raw.partsTable) ? raw.partsTable.length : 0;
-    const labour = Array.isArray(raw.labourTable) ? raw.labourTable.length : 0;
-    return parts + labour;
-  }
-
-  private appendExpandedRows(
-    expanded: WorkshopRawResult,
-    parts: Record<string, unknown>[],
-    labour: Record<string, unknown>[],
-  ): void {
-    if (Array.isArray(expanded.partsTable)) {
-      parts.push(...(expanded.partsTable as Record<string, unknown>[]));
-    }
-    if (Array.isArray(expanded.labourTable)) {
-      labour.push(...(expanded.labourTable as Record<string, unknown>[]));
-    }
-  }
-
   /** Minimum rows expected for a chunk — first page often has letterhead + few rows. */
   private minRowsForChunk(
     pageIndices: number[],
@@ -291,11 +143,27 @@ export class WorkshopBillExtractor {
     if (serials.length <= 1) return false;
 
     const uniqueSerials = Array.from(new Set(serials)).sort((a, b) => a - b);
-    const min = uniqueSerials[0];
-    const max = uniqueSerials[uniqueSerials.length - 1];
 
-    const expectedCount = max - min + 1;
-    return expectedCount > uniqueSerials.length;
+    // Split into segments separated by large jumps (≥20).
+    // Dual-column invoices (Upcountry/Volvo) interleave two sequences like
+    // [1, 101, 2, 102, 3, 103], which sorts to [1,2,3,101,102,103] — a jump of
+    // 98 in the middle. Treating those as one range would always flag a gap.
+    // Instead we check each contiguous segment independently.
+    const segments: number[][] = [[uniqueSerials[0]]];
+    for (let i = 1; i < uniqueSerials.length; i++) {
+      if (uniqueSerials[i] - uniqueSerials[i - 1] >= 20) {
+        segments.push([]);
+      }
+      segments[segments.length - 1].push(uniqueSerials[i]);
+    }
+
+    for (const seg of segments) {
+      if (seg.length <= 1) continue;
+      const segMin = seg[0];
+      const segMax = seg[seg.length - 1];
+      if (segMax - segMin + 1 > seg.length) return true;
+    }
+    return false;
   }
 
   private hasSerialGaps(parts: Record<string, unknown>[], labour: Record<string, unknown>[]): boolean {
@@ -309,16 +177,6 @@ export class WorkshopBillExtractor {
       if (Number.isFinite(n) && n > max) max = n;
     }
     return max;
-  }
-
-  /**
-   * Lean + multi-page PDFs go straight to chunk mode — avoids a wasted single-pass call
-   * that flash-lite silently truncates (~16–20 rows) before chunk retry doubles cost.
-   */
-  private shouldUseChunkDirect(pageCount: number, hasLocalPdf: boolean, fallbackEnabled: boolean): boolean {
-    if (!fallbackEnabled || !hasLocalPdf) return false;
-    if (_config.WORKSHOP_LEAN_MODE && pageCount >= 2) return true;
-    return pageCount > _config.WORKSHOP_SINGLE_PASS_MAX_PAGES;
   }
 
   private async runSingleLeanChunkExtract(
@@ -348,9 +206,12 @@ export class WorkshopBillExtractor {
       )) as WorkshopRawResult;
 
       const expanded = expandWorkshopArrayRows(chunk);
-      const parts: Record<string, unknown>[] = [];
-      const labour: Record<string, unknown>[] = [];
-      this.appendExpandedRows(expanded, parts, labour);
+      const parts = Array.isArray(expanded.partsTable)
+        ? (expanded.partsTable as Record<string, unknown>[])
+        : [];
+      const labour = Array.isArray(expanded.labourTable)
+        ? (expanded.labourTable as Record<string, unknown>[])
+        : [];
 
       return { raw: chunk, parts, labour };
     } finally {
@@ -570,79 +431,11 @@ export class WorkshopBillExtractor {
     };
   }
 
-  /**
-   * Returns true when a single-pass result looks silently truncated.
-   * flash-lite can stop at ~20 rows with finishReason=STOP and no error thrown.
-   * Heuristic: fewer than 10 rows per page on a multi-page bill is suspicious.
-   */
-  private isSoftTruncated(raw: WorkshopRawResult, pageCount: number): boolean {
-    if (pageCount < 2) return false;
-    const totalRows = this.countTableRows(raw);
-    const minExpected = pageCount * 10;
-    return totalRows < minExpected;
-  }
-
   private async extractWithFallback(
     inputData: unknown,
     pageCount: number,
-  ): Promise<{ raw: WorkshopRawResult; mode: ExtractionMode }> {
-    const fallbackEnabled = _config.WORKSHOP_CHUNK_FALLBACK_ENABLED === 'true';
-    const hasLocalPdf = Boolean(getPrimaryFileInput(inputData)?.localPdfPath);
-    const maxSinglePassPages = _config.WORKSHOP_SINGLE_PASS_MAX_PAGES;
-
-    // Lean multi-page + large bills skip single-pass — flash-lite silently stops at ~16–20 rows.
-    if (this.shouldUseChunkDirect(pageCount, hasLocalPdf, fallbackEnabled)) {
-      this.obs.info(
-        `WorkshopBillExtractor: Skipping single-pass — ${pageCount} page(s), ` +
-        `lean=${_config.WORKSHOP_LEAN_MODE}, maxSinglePass=${maxSinglePassPages}. ` +
-        'Running chunk mode directly.',
-      );
-      const raw = _config.WORKSHOP_LEAN_MODE
-        ? await this.extractChunkFallbackLean(inputData, pageCount)
-        : await this.extractChunkFallback(inputData, pageCount);
-      return { raw, mode: 'chunk-fallback' };
-    }
-
-    try {
-      const raw = await this.extractSinglePass(inputData, pageCount);
-
-      // Fix C: soft-truncation safety net — flash-lite can return too few rows with no error.
-      if (this.isSoftTruncated(raw, pageCount) && fallbackEnabled && hasLocalPdf) {
-        this.obs.warn(
-          `WorkshopBillExtractor: Soft truncation detected on single-pass ` +
-          `(${(Array.isArray(raw.partsTable) ? (raw.partsTable as unknown[]).length : 0) + (Array.isArray(raw.labourTable) ? (raw.labourTable as unknown[]).length : 0)} rows for ${pageCount} pages) — ` +
-          `retrying with chunk fallback.`,
-          { pageCount, chunkSize: _config.WORKSHOP_CHUNK_PAGE_SIZE },
-        );
-        const retried = _config.WORKSHOP_LEAN_MODE
-          ? await this.extractChunkFallbackLean(inputData, pageCount)
-          : await this.extractChunkFallback(inputData, pageCount);
-        return { raw: retried, mode: 'chunk-fallback' };
-      }
-
-      return { raw, mode: 'single-pass' };
-    } catch (err) {
-      if (!isWorkshopTruncationError(err)) throw err;
-
-      if (!fallbackEnabled || !hasLocalPdf) {
-        throw new UnrecoverableDocumentError(
-          'EXTRACTION_TRUNCATED',
-          fallbackEnabled
-            ? 'Workshop bill output exceeded token limit. PDF page slicing is unavailable for this upload — use a PDF file URL or split the document manually.'
-            : 'Workshop bill output exceeded token limit in single-pass mode. Enable WORKSHOP_CHUNK_FALLBACK_ENABLED or split the PDF into smaller uploads.',
-        );
-      }
-
-      this.obs.warn(
-        'WorkshopBillExtractor: Single-pass truncated — running local PDF chunk fallback',
-        { pageCount, chunkSize: _config.WORKSHOP_CHUNK_PAGE_SIZE, lean: _config.WORKSHOP_LEAN_MODE },
-      );
-
-      const raw = _config.WORKSHOP_LEAN_MODE
-        ? await this.extractChunkFallbackLean(inputData, pageCount)
-        : await this.extractChunkFallback(inputData, pageCount);
-      return { raw, mode: 'chunk-fallback' };
-    }
+  ): Promise<WorkshopRawResult> {
+    return this.extractChunkFallbackLean(inputData, pageCount);
   }
 
   public async extract(inputData: unknown) {
@@ -650,39 +443,21 @@ export class WorkshopBillExtractor {
     const pageCount = resolveDocumentPageCount(inputData);
 
     this.obs.info(
-      `WorkshopBillExtractor: Starting extraction — ${fileCount} file(s), ${pageCount} PDF page(s), ` +
-      `lean=${_config.WORKSHOP_LEAN_MODE}, chunkFallback=${_config.WORKSHOP_CHUNK_FALLBACK_ENABLED}`,
+      `WorkshopBillExtractor: Starting extraction — ${fileCount} file(s), ${pageCount} PDF page(s)`,
     );
 
-    const { raw: rawResult, mode: extractionMode } = await this.extractWithFallback(
-      inputData,
-      pageCount,
-    );
+    const rawResult = await this.extractWithFallback(inputData, pageCount);
 
     this.obs.info('WorkshopBillExtractor: Raw extraction complete, validating with Zod schema...');
 
     const parsedResult = this.parseWorkshopResult(rawResult);
 
-    // Final resequencing pass — catches any single-pass restart that the Zod
-    // parse may have altered, or leftover gaps after deduplication.
+    // Final pass — rowIndex 1..N for UI; srNo stays as printed (or null if no serial column).
     if (Array.isArray(parsedResult.partsTable) && parsedResult.partsTable.length > 0) {
-      resequenceTableSerials(parsedResult.partsTable as Record<string, unknown>[]);
+      assignTableRowIndexes(parsedResult.partsTable as Record<string, unknown>[]);
     }
     if (Array.isArray(parsedResult.labourTable) && parsedResult.labourTable.length > 0) {
-      resequenceTableSerials(parsedResult.labourTable as Record<string, unknown>[]);
-    }
-
-    if (extractionMode === 'single-pass') {
-      enforceDocumentTypeGates(parsedResult, {
-        extractorName: 'WorkshopBillExtractor',
-        wrongTypeMessage: (typeStr) =>
-          `The uploaded document appears to be a "${typeStr}", not a Workshop Bill. ` +
-          'Please upload a valid repair/service bill, proforma estimate, or job card.',
-        mixedBatchMessage: (pageList) =>
-          `Mixed document batch detected for Workshop Bill extraction. ${pageList} ` +
-          'Please ensure all uploaded pages belong to the same workshop bill or repair estimate. ' +
-          'Remove any RC cards, DLs, insurance policies, or sale invoices from the upload.',
-      });
+      assignTableRowIndexes(parsedResult.labourTable as Record<string, unknown>[]);
     }
 
     const confidence = parsedResult.confidenceScore ?? 0;
@@ -756,12 +531,12 @@ export class WorkshopBillExtractor {
       gstSummary: gstInfo,
       grandTotalVerified: grandTotalCheck.ok,
       requiresHumanReview: parsedResult.requiresHumanReview || !grandTotalCheck.ok,
-      extractionMode,
+      extractionMode: 'chunk-fallback',
     };
 
     this.obs.info(
       `WorkshopBillExtractor: Extraction successful — ` +
-      `pages=${pageCount}, mode=${extractionMode}, ` +
+      `pages=${pageCount}, ` +
       `parts=${parsedResult.partsTable?.length ?? 0}, ` +
       `labour=${parsedResult.labourTable?.length ?? 0}, ` +
       `billType=${billType}, ` +

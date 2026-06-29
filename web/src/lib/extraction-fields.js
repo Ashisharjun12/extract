@@ -223,11 +223,11 @@ const WORKSHOP_META = [
   'invalidPageIndices', 'confidenceScore', 'requiresHumanReview',
 ]
 const PARTS_COLUMNS = [
-  'srNo', 'partNumber', 'hsnSac', 'description', 'uom', 'quantity',
+  'rowIndex', 'srNo', 'partNumber', 'hsnSac', 'description', 'uom', 'quantity',
   'unitPrice', 'discount', 'taxableAmount', 'taxAmount', 'totalPrice', 'rowType',
 ]
 const LABOUR_COLUMNS = [
-  'srNo', 'labourCode', 'hsnSac', 'description', 'quantityOrHours', 'rate',
+  'rowIndex', 'srNo', 'labourCode', 'hsnSac', 'description', 'quantityOrHours', 'rate',
   'grossAmount', 'discount', 'taxableAmount', 'taxAmount', 'totalAmount', 'rowType',
 ]
 
@@ -245,6 +245,24 @@ function tableTab(id, label, rows, columns) {
   }
 }
 
+/** True when at least one row has a printed bill serial number. */
+function hasAnyPrintedSrNo(rows) {
+  return rows?.some((r) => {
+    const n = Number(r?.srNo)
+    return Number.isFinite(n) && n > 0
+  })
+}
+
+/** Workshop tables: hide srNo column when the bill has no serial column. */
+function workshopTableTab(id, label, rows, baseColumns) {
+  const flat = flattenExtraColumns(rows)
+  const formatted = formatTableRows(flat)
+  const columns = hasAnyPrintedSrNo(flat)
+    ? baseColumns
+    : baseColumns.filter((c) => c !== 'srNo')
+  return tableTab(id, label, formatted, columns)
+}
+
 function formatTableRows(rows) {
   if (!rows?.length) return []
   return rows.map((row) => {
@@ -254,6 +272,25 @@ function formatTableRows(rows) {
       out[k] = k === 'opted' ? formatPolicyFieldValue('opted', v) : formatFieldValue(v)
     }
     return out
+  })
+}
+
+/**
+ * Flattens the extraColumns array (ec[]) from each workshop row into sibling keys
+ * so tableColumnsFromRows can auto-discover and display them as proper columns.
+ * Each ec entry {key, value} becomes row[key] = value. The ec array is removed.
+ */
+function flattenExtraColumns(rows) {
+  if (!rows?.length) return rows
+  return rows.map((row) => {
+    if (!row || typeof row !== 'object') return row
+    const { extraColumns, ...rest } = row
+    if (!Array.isArray(extraColumns) || extraColumns.length === 0) return rest
+    const flat = { ...rest }
+    for (const col of extraColumns) {
+      if (col?.key) flat[col.key] = col.value ?? null
+    }
+    return flat
   })
 }
 
@@ -334,8 +371,8 @@ export function buildInspectViews(documentType, result) {
 
     case 'WORKSHOP': {
       const tabs = [
-        tableTab('parts', 'Parts table', formatTableRows(result.partsTable), PARTS_COLUMNS),
-        tableTab('labour', 'Labour table', formatTableRows(result.labourTable), LABOUR_COLUMNS),
+        workshopTableTab('parts', 'Parts table', result.partsTable, PARTS_COLUMNS),
+        workshopTableTab('labour', 'Labour table', result.labourTable, LABOUR_COLUMNS),
         fieldTab('quality', 'Quality', pickFieldRows(result, WORKSHOP_META)),
         extraFieldsTab(result),
         allTab,

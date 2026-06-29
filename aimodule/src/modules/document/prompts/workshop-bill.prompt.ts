@@ -41,6 +41,10 @@ const COMPLETENESS_MANDATE = `
   5. Repeating dealer headers (name, GSTIN, address) on every page → workshopDetails ONLY, not table rows.
   6. Section header rows ("Spare Part Details", "Labour Details", column headers) → NOT data rows.
   7. An extraction missing ANY labour rows (including those after a parts "Sub Total") is INVALID.
+  8. STOP at the HSN-wise tax summary table — many OEM invoices (Volvo, BharatBenz, etc.) print a
+     separate "HSN/SAC Code | Taxable Amount | CGST | SGST | IGST | Total" aggregation table AFTER
+     the Grand Total. These rows have no Part No and no Description. Do NOT extract them as parts/labour.
+     Bill-end for extraction purposes = the Grand Total / "Total Parts Cost + Labour Cost" summary block.
   ═══════════════════════════════════════════════════════
 `;
 
@@ -91,6 +95,16 @@ const TABLE_RULES = `
   6. Preserve printed Sr.No in s even when it continues across pages (e.g. s: 101).
   7. Eicher / narrow Sr.No column: 3-digit numbers (100+) may wrap in one cell ("12"+"6"=126).
      Always merge wrapped digits into s — never treat the second digit as part number.
+  8. HSN-WISE TAX SUMMARY TABLE — NEVER extract these rows as parts or labour.
+     These appear AFTER the Grand Total / "Total Parts Cost" / "Total Labour Cost" footer as a
+     separate table for GST filing purposes. Recognition signals (ALL of the below apply together):
+     • Table columns are ONLY: SR.No | HSN/SAC Code | Taxable Amount | CGST Rate | CGST Amount |
+       SGST/UTGST Rate | SGST/UTGST Amount | IGST Rate | IGST Amount | Total Amount
+     • There is NO Part No / Part Number / Item Code column and NO Description / Particulars column
+     • Rows contain only an HSN/SAC code and aggregated monetary totals — no part names
+     • Common on Volvo, BharatBenz/DICV, and OEM dealer invoices (e.g. UPCOUNTRY VEHICLE PRIVATE LIMITED)
+     STOP extracting parts/labour rows as soon as you reach the Grand Total block or
+     "Total Parts Cost / Total Labour Cost / Total Others Cost" summary. Everything after that is tax metadata.
   ${ROW_CLASSIFICATION}
 `;
 
@@ -107,107 +121,7 @@ const GATE_BLOCK = `
   If false, STOP.
 `;
 
-export const getWorkshopSinglePassPrompt = (): string => `
-  You are an expert Indian motor vehicle workshop bill OCR assistant.
-  You handle ALL OEM and dealer formats — car, LCV, HCV, tractor, 2-wheeler.
 
-  ${COMPLETENESS_MANDATE}
-
-  ${GATE_BLOCK}
-
-  STEP 2 — EXTRACT COMPLETE DOCUMENT in one pass.
-  ${COLUMN_MAPPING}
-  ${TABLE_RULES}
-
-  workshopDetails — from header (page 1; ignore repeats on later pages):
-  • name/workshopName, gstin, invoiceNumber, estimateDate, jobCardNumber
-  • vehicleNumber, vehicleModel, customerName, odometerReading, mobileNo
-  • vehicleNumber: normalize spacing/dashes (e.g. NL01AA6352, HR55AK7388).
-
-  summary — copy printed footer totals EXACTLY (do not recompute from rows):
-  • totalPartsAmount / partsSubtotalWithTax, totalLabourAmount / labourSubtotalWithTax
-  • totalDiscount, igst/cgst/sgst amounts and rates, grandTotal, amountInWords
-  • Printed grand total is authoritative.
-
-  extraFields — bank details, CIN, insurance co., prepared by, dealer code, etc.
-
-  QUALITY: Set requiresHumanReview=true if scan is blurry, out-of-focus, low resolution, or partially cut off.
-  confidenceScore 0.0–1.0 (lower for blur). List unclear fields in lowConfidenceFields[].
-
-  CRITICAL: If this bill has 50–300+ rows, you MUST still output ALL rows including the last page labour/misc rows.
-`;
-
-export const getWorkshopMetaPrompt = (): string => `
-  You are an expert Indian workshop bill OCR assistant — METADATA PASS ONLY.
-  Works for any OEM/dealer format (Toyota, Tata, Eicher, Maruti, independent, etc.).
-
-  ${GATE_BLOCK}
-
-  Extract ONLY from the provided page slice (usually page 1):
-  • Document gate fields
-  • workshopDetails (dealer, GSTIN, invoice/estimate/job card, vehicle, customer, odometer)
-  • summary (ALL printed totals — parts subtotal, labour subtotal, tax, grand total, amount in words)
-  • extraFields, confidenceScore, requiresHumanReview, lowConfidenceFields
-
-  QUALITY: requiresHumanReview=true if blurry/out-of-focus/low-res; confidenceScore 0.0–1.0; lowConfidenceFields[] for unclear fields.
-
-  Do NOT extract partsTable or labourTable in this pass.
-  If isCorrectDocumentType is false, STOP.
-`;
-
-export const getWorkshopChunkPrompt = (): string => `
-  You are an expert Indian workshop bill OCR assistant — TABLE ROWS ONLY.
-  Bill format is unknown — apply universal rules below.
-
-  Extract ONLY table data rows visible on the provided PDF page(s) / slice.
-  No header, no summary, no gate fields.
-
-  ${COLUMN_MAPPING}
-  ${TABLE_RULES}
-
-  • partsTable — all spare/part rows on these page(s). Use [] if none.
-  • labourTable — all labour/service/misc-activity rows on these page(s). Use [] if none.
-  • Skip: dealer letterhead, column header row, section titles, subtotal/grand-total footer lines.
-  • s (Sr.No) continues from earlier pages — do NOT restart; preserve printed values.
-  • "Miscellaneous Activity" / HSN 998714 / service descriptions → labourTable.
-  • Physical parts / HSN 87xx → partsTable.
-  • Wide tables (10–17 columns): use ec[] for every column not mapped to a canonical field.
-  • IMPORTANT: A "Sub Total" / "Spare Sub Total" footer ends the PARTS section only — if a "Labour and Job Work"
-    or "Labour Details" section appears AFTER it on these pages, extract ALL its rows into labourTable.
-
-  Return ONLY partsTable and labourTable arrays. Extract EVERY data row on these pages.
-`;
-
-/**
- * Lean single-pass prompt — extracts ONLY gate fields + partsTable + labourTable.
- * No workshopDetails, summary, or extraFields. Cheaper output, same table accuracy.
- */
-export const getWorkshopLeanSinglePassPrompt = (): string => `
-  You are an expert Indian motor vehicle workshop bill OCR assistant.
-  You handle ALL OEM and dealer formats — car, LCV, HCV, tractor, 2-wheeler.
-
-  ${COMPLETENESS_MANDATE}
-
-  ${GATE_BLOCK}
-
-  STEP 2 — EXTRACT TABLE ROWS ONLY (no header, no summary, no totals).
-  ${COLUMN_MAPPING}
-  ${TABLE_RULES}
-
-  QUALITY: Set requiresHumanReview=true if scan is blurry, out-of-focus, or partially cut off.
-  confidenceScore 0.0-1.0. List unclear fields in lowConfidenceFields[].
-
-  CRITICAL: If this bill has 50-300+ rows, you MUST still output ALL rows including last-page labour/misc rows.
-`;
-
-/**
- * Lean first-chunk prompt — gate check + table rows from the first page slice.
- * Used in lean chunk fallback to replace the separate meta pass.
- */
-// ---------------------------------------------------------------------------
-// Array-of-arrays prompts — used when WORKSHOP_LEAN_MODE=true.
-// Output format eliminates repeated JSON key names; ~85% fewer output tokens.
-// ---------------------------------------------------------------------------
 
 const ARRAY_COLUMN_SPEC = `
   OUTPUT FORMAT — ARRAY OF ARRAYS (no object keys):
@@ -230,13 +144,91 @@ const ARRAY_COLUMN_SPEC = `
   • NEVER include column names or object keys — position IS the identity
   • Numbers as strings: "960.25" not 960.25
   • Missing column → "" (empty string), NOT null or omit
+  • Sr.No col[0]: if the table HAS a serial column, copy the EXACT printed value per row
+    (including dual-series layouts like 1, 101, 2, 102). If the table has NO serial column,
+    leave col[0] empty ("") — do NOT invent 1, 2, 3.
+  • Part No / Lab code col[1]: ALWAYS fill — including plain-word local spare codes
+    (ADHESIVE, TYREM, ACGASS, SEALENT). If Part No and Description are in one cell,
+    split them: col[1]=code word, col[3]=full description text.
   • RowType must be exactly "PART", "COMBINED", or "LABOUR"
   • For BharatBenz/DICV bills: BillTo=col[12], Share%=col[13], SGSTrate=col[14], CGSTrate=col[15]
   • Toyota/Maruti: codes ending PRT/PNP/EBR/EPR/IBR (81561PRT, 53301EPR) → labourTable col[1];
     A-xxx part codes with 87xx HSN → partsTable col[1]
-  • Eicher / narrow Sr.No column: 3-digit Sr.No (100–999) may wrap visually in one cell
-    (e.g. "12" on line 1 + "6" on line 2 = Sr.No 126). Concatenate into col[0] as "126".
-    NEVER put the wrapped digit in col[1] — col[1] must be Part No / Labour Code only.
+  • See INVOICE FORMAT EDGE CASES below for format-specific Sr.No and column rules.
+`;
+
+/**
+ * Format-specific extraction edge cases.
+ *
+ * HOW TO ADD A NEW EDGE CASE:
+ *   1. Append [EC-N] with: symptom, affected OEMs/dealers, and extraction rules.
+ *   2. No other file needs to change — all three prompt functions include ${EDGE_CASES}.
+ */
+const EDGE_CASES = `
+  ═══════════════════════════════════════════════════════
+  INVOICE FORMAT EDGE CASES — READ BEFORE EXTRACTING
+  ═══════════════════════════════════════════════════════
+
+  [EC-1] Eicher narrow-column Sr.No wrap  (Eicher Trucks, some HCV/LCV dealers)
+  • SYMPTOM: A single narrow Sr.No column where a 3-digit number (100–999) splits across
+    two visual sub-lines WITHIN the same column cell — e.g., "12" above "6" → Sr.No 126.
+  • RULE: The wrapped fragment is always a SINGLE trailing digit. Concatenate ONLY when
+    the second part is exactly one digit: "12"+"6"=126. Two-digit values like "10" or "36"
+    are NEVER a wrapped trailing digit — do NOT concatenate them with the Sr.No.
+  • RULE: The column immediately after Sr.No is Part No / Labour Code, NOT part of the Sr.No.
+    NEVER treat a Part No, HSN code, or any other column value as a wrapped Sr.No digit.
+
+  [EC-2] Upcountry Vehicle / Volvo OEM dual-series two-column layout
+  • SYMPTOM: Each PRINTED ROW contains TWO separate item rows side by side.
+    Left series:  Sr.No 1, 2, 3 … ~100   (physical parts, HSN 87xxxxxx)
+    Right series: Sr.No 101, 102, … ~172  (mixed parts and labour, SAC 998714)
+    A column labelled "PC" (value always "10") appears between Sr.No and the Part Number.
+  • RULE: Extract EACH item as its OWN separate array row with its OWN Sr.No.
+    Left item → one row; right item → another row. They are independent, not wrapped digits.
+  • RULE: Do NOT put the "PC" column value ("10") into array position 1 (PartNo/LabourCode).
+    The real PartNo in this format starts with "VO " (e.g. "VO 24661254"). Omit "PC" or
+    capture it in an extraColumns entry if needed.
+  • RULE: Do NOT apply [EC-1] Eicher concatenation to digits from the right-side item's
+    Sr.No — they belong to a separate row, not to the left item's Sr.No.
+
+  [EC-3] HSN-wise tax summary table  (Volvo/Upcountry, BharatBenz/DICV, some Maruti dealers)
+  • SYMPTOM: AFTER "Total Parts Cost / Total Labor Cost / Total Others Cost" footer, pages may
+    show ONLY an HSN/SAC aggregation table — columns: SR.No | HSN/SAC Code | Taxable Amount |
+    CGST Rate | CGST Amt | SGST Rate | SGST Amt | IGST | Total. NO Part No, NO Description, NO Qty.
+    Upcountry/Volvo 11-page bills: line items end on page 9; pages 10–11 are this summary ONLY.
+  • RULE: STOP extracting when you reach the Grand Total / "Total Parts Cost + Labour Cost"
+    summary block on the last item page. Return empty arrays for any later pages in the slice.
+  • RULE: NEVER emit rows where col[1] (PartNo/LabourCode) is ONLY an 8-digit HSN with no
+    description — those are tax-metadata rows, not spare parts or labour tasks.
+  • RULE: NEVER emit a labour row where col[1] AND col[2] are both the same SAC code (e.g. 998714)
+    with no description — that is the SAC aggregation total, not a labour line item.
+
+  [EC-4] Text-only / local spare part codes  (Mitsubishi, Maruti dealers, consumables)
+  • SYMPTOM: Part No / Lab code column contains plain English words, not alphanumeric OEM IDs
+    (e.g. ADHESIVE, TYREM, ACGASS, SEALENT, PAINT) with a separate Description column.
+  • RULE: ALWAYS put the word code in col[1] (PartNo/LabourCode) — never leave col[1] empty
+    and never move the code into col[3] Description only.
+  • RULE: If Part No and Description are printed in one merged cell, split: col[1]=code,
+    col[3]=full description (e.g. col[1]="ADHESIVE", col[3]="Local Spare Part Consumable-SEALENT").
+
+  [EC-5] Single flat labour row after parts (BRAR/Mahindra/Maruti service quotations)
+  • SYMPTOM: Page continues parts rows then a "Labour :" / "Labour" section with ONE (or few)
+    flat labour lines — SAC 998729/998714, no Qty/Unit/Rate columns, only Taxable/Total amount.
+    Example: LOC-Z222 | KN OPERATIONS - ACCIDENT REPAIRS | 998729 | taxable 20000.
+  • RULE: Extract into labourTable EVEN IF there is only ONE labour row on the page.
+    "Labour :" is a section header — the row BELOW it is data, not a footer.
+  • RULE: col[1]=LabourCode (e.g. LOC-Z222), col[2]=SAC, col[3]=Description; leave col[4]/col[5]
+    empty when Qty/Rate are blank on the PDF; put Taxable in col[8], Total in col[10].
+  • RULE: Do NOT skip single labour rows because the page is mostly parts rows.
+
+  [EC-6] Split "Part Detail" + "Labour Detail" sections  (Kia, Hyundai, some OEM insurance estimates)
+  • SYMPTOM: Same page has a "Part Detail" block (with Part No column) then immediately below a
+    "Labour Detail" block (no Part No, no HSN/SAC — only Seq, Description, Labour Amt, Qty, Tax, Total).
+    Labour Seq restarts at 1. Page 2 may continue one mixed list (R&R / Body & Paint / Denting lines).
+  • RULE: Extract ALL Labour Detail rows into labourTable — even 2 rows, even without SAC column.
+    col[1] and col[2] may be "" when the PDF has no code/HSN columns.
+  • RULE: Descriptions with R&R, Body & Paint, Denting, Body Repair → labourTable (rt=LABOUR).
+  • RULE: Do NOT stop extraction after Part Detail — the Labour Detail section on the SAME page is required.
 `;
 
 /**
@@ -255,6 +247,7 @@ export const getWorkshopLeanArraySinglePassPrompt = (): string => `
   ${COLUMN_MAPPING}
   ${TABLE_RULES}
   ${ARRAY_COLUMN_SPEC}
+  ${EDGE_CASES}
 
   QUALITY: Set requiresHumanReview=true if scan is blurry, out-of-focus, or partially cut off.
   confidenceScore 0.0–1.0. List unclear fields in lowConfidenceFields[].
@@ -275,6 +268,7 @@ export const getWorkshopLeanArrayFirstChunkPrompt = (): string => `
   Extract ALL table data rows from the provided PDF page(s) / slice as array-of-arrays.
   ${ARRAY_COLUMN_SPEC}
   ${TABLE_RULES}
+  ${EDGE_CASES}
 
   • s (Sr.No) may start at 1 — preserve printed values
   • "Miscellaneous Activity" / HSN 998714 → labourTable row. HSN 87xx → partsTable row
@@ -294,6 +288,7 @@ export const getWorkshopChunkArrayPrompt = (): string => `
   No header. No summary. No gate fields.
   ${ARRAY_COLUMN_SPEC}
   ${TABLE_RULES}
+  ${EDGE_CASES}
 
   • partsTable — all spare/part rows on these pages. Use [] if none.
   • labourTable — all labour/service/misc rows on these pages. Use [] if none.
@@ -305,25 +300,3 @@ export const getWorkshopChunkArrayPrompt = (): string => `
   Return ONLY partsTable and labourTable. Extract EVERY row.
 `;
 
-export const getWorkshopLeanFirstChunkPrompt = (): string => `
-  You are an expert Indian workshop bill OCR assistant — GATE CHECK + TABLE ROWS.
-
-  ${GATE_BLOCK}
-
-  If isCorrectDocumentType is false, return empty tables and STOP.
-
-  Extract ALL table data rows visible on the provided PDF page(s) / slice.
-  ${COLUMN_MAPPING}
-  ${TABLE_RULES}
-
-  • partsTable — all spare/part rows on these pages. Use [] if none.
-  • labourTable — all labour/service/misc rows on these pages. Use [] if none.
-  • Skip: dealer letterhead, column header row, section titles, subtotal/grand-total footer lines.
-  • s (Sr.No) may start at 1 on these pages — preserve printed values.
-  • "Miscellaneous Activity" / HSN 998714 → labourTable. HSN 87xx → partsTable.
-  • Wide tables (10–17 columns): use ec[] for every unmapped column.
-  • IMPORTANT: A "Sub Total" / "Spare Sub Total" footer ends the PARTS section only — if a "Labour and Job Work"
-    or "Labour Details" section appears AFTER it on these pages, extract ALL its rows into labourTable.
-
-  Return gate fields + partsTable + labourTable arrays. Extract EVERY row on these pages.
-`;
