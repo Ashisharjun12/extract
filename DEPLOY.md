@@ -1,6 +1,6 @@
 # VPS deployment
 
-Full stack: **aimodule** (API) + **aimodule-worker** + **test-backend** + **web**.
+Full stack: **valkey** + **aimodule** (API) + **aimodule-worker** + **test-backend** + **web**.
 
 Same `docker-compose.yml` for local dev and production.
 
@@ -8,7 +8,6 @@ Same `docker-compose.yml` for local dev and production.
 
 - Docker and Docker Compose on the VPS
 - External services (not in compose):
-  - **Redis** (Upstash or self-hosted) — queue + rate limiting
   - **MongoDB** — portal user/session data
   - **Google Cloud Storage** — aimodule file staging
   - **Cloudflare R2** — portal file uploads
@@ -26,7 +25,6 @@ Same `docker-compose.yml` for local dev and production.
    Edit `.env` and fill every value. Required highlights:
    - `PUBLIC_URL` — public URL users open (e.g. `https://docs.yourdomain.com`)
    - `GEMINI_API_KEY` and model slugs (`AI_MODEL`, `AI_MODEL_LITE`, `AI_MODEL_PRO`)
-   - `REDIS_QUEUE_URI`, `REDIS_RATE_LIMIT_URI`
    - `GCS_*` credentials
    - `DATABASE_URI`, `R2_*`
    - `JWT_SECRET`, `WEBHOOK_SECRET`, `SESSION_SECRET`, `ADMIN_API_KEY` — use strong random values
@@ -50,24 +48,27 @@ docker compose ps
 # API health (inside aimodule container)
 docker compose exec aimodule curl -s localhost:3000/health
 
+# Valkey (queue)
+docker compose exec valkey valkey-cli ping
+
 # Logs
 docker compose logs -f aimodule aimodule-worker
 ```
 
 **Smoke test:** upload a document via the web UI → test-backend enqueues to aimodule → worker processes → webhook returns result to portal.
 
-## Scaling workers
+## Workers
 
-```bash
-docker compose up -d --scale aimodule-worker=2
-```
+Two worker replicas run by default: `aimodule-worker` and `aimodule-worker-2`. Both pull jobs from the same Valkey queues in parallel.
 
 ## Architecture
 
 ```
 Browser → web:80 → test-backend:3001 → aimodule:3000 (enqueue)
-aimodule-worker → Redis → Gemini/GCS → webhook → test-backend
+aimodule-worker → valkey (BullMQ) → Gemini/GCS → webhook → test-backend
 ```
+
+Valkey runs in compose (`redis://valkey:6379`), internal network only — not exposed on the host.
 
 ## Observability
 
