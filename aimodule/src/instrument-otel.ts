@@ -1,10 +1,4 @@
-/**
- * OpenTelemetry bootstrap — metrics + traces to SigNoz.
- * Traces enable the SigNoz Services tab (HTTP spans on API, job spans on worker).
- * HTTP auto-instrumentation is limited to http/express to reduce overlap with New Relic.
- *
- * Import BEFORE instrument.js in server.ts and worker.ts.
- */
+
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';

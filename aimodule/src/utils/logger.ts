@@ -19,8 +19,7 @@ function buildTransport(): pino.LoggerOptions['transport'] | undefined {
         singleLine: false,
       },
     });
-  } else if (otelLogsEnabled) {
-    // Prod + SigNoz: keep JSON on stdout alongside OTLP export
+  } else {
     targets.push({
       target: 'pino/file',
       level: 'info',

@@ -92,9 +92,7 @@ const {
   AI_MODEL_PRO_CACHE_INPUT_USD_PER_1M,
   PROMPT_CACHING,
   PROMPT_CACHE_TTL_SECONDS,
-  PROMPT_CACHE_MIN_TOKENS,
   NEW_RELIC_LICENSE_KEY,
-  NEW_RELIC_APP_NAME,
   OTEL_ENABLED,
   OTEL_TRACES_ENABLED,
   OTEL_LOGS_ENABLED,
@@ -113,11 +111,8 @@ const {
   RESULT_CACHE_ENABLED,
   RESULT_CACHE_TTL_SECONDS,
   DEFAULT_EXTRACT_MODE,
-  WORKSHOP_MULTIPASS_PAGE_THRESHOLD,
   WORKSHOP_CHUNK_PAGE_SIZE,
   WORKSHOP_MAX_GEMINI_RETRIES,
-  POLICY_MULTIPASS_PAGE_THRESHOLD,
-  POLICY_MULTIPASS_FALLBACK_ENABLED,
   POLICY_MAX_GEMINI_RETRIES,
   RC_MAX_GEMINI_RETRIES,
   DL_MAX_GEMINI_RETRIES,
@@ -162,16 +157,10 @@ export const _config = {
   DL_MAX_OUTPUT_TOKENS,
   WORKSHOP_MAX_OUTPUT_TOKENS,
   POLICY_MAX_OUTPUT_TOKENS,
-  /** @deprecated Unused — workshop always tries single-pass first. */
-  WORKSHOP_MULTIPASS_PAGE_THRESHOLD: parseEnvInt(WORKSHOP_MULTIPASS_PAGE_THRESHOLD, 15),
   /** Pages per local PDF slice when extracting per chunk (default 2). */
   WORKSHOP_CHUNK_PAGE_SIZE: parseEnvInt(WORKSHOP_CHUNK_PAGE_SIZE, 2),
   /** Gemini retries per workshop call — 1 avoids 3× cost on transient errors (default 1). */
   WORKSHOP_MAX_GEMINI_RETRIES: parseEnvInt(WORKSHOP_MAX_GEMINI_RETRIES, 1),
-  /** @deprecated Unused — policy always tries single-pass first. */
-  POLICY_MULTIPASS_PAGE_THRESHOLD: parseEnvInt(POLICY_MULTIPASS_PAGE_THRESHOLD, 15),
-  /** @deprecated Multipass disabled by default — single-pass + one retry only (cost control). */
-  POLICY_MULTIPASS_FALLBACK_ENABLED: POLICY_MULTIPASS_FALLBACK_ENABLED ?? 'false',
   /** Gemini retries per policy call (default 1). */
   POLICY_MAX_GEMINI_RETRIES: parseEnvInt(POLICY_MAX_GEMINI_RETRIES, 1),
   /** Gemini retries per RC call (default 1). */
@@ -206,7 +195,6 @@ export const _config = {
   // Prompt caching: off | implicit | explicit
   PROMPT_CACHING:           PROMPT_CACHING ?? 'implicit',
   PROMPT_CACHE_TTL_SECONDS: parseEnvInt(PROMPT_CACHE_TTL_SECONDS, 3600),
-  PROMPT_CACHE_MIN_TOKENS:  parseEnvInt(PROMPT_CACHE_MIN_TOKENS, 2048),
 
   // Redis / Queue
   REDIS_QUEUE_URI,
@@ -243,9 +231,8 @@ export const _config = {
   WEBHOOK_SECRET,
 
   // Observability
-  OBSERVABILITY_PROVIDER: OBSERVABILITY_PROVIDER ?? 'both',
+  OBSERVABILITY_PROVIDER: OBSERVABILITY_PROVIDER ?? 'newrelic',
   NEW_RELIC_LICENSE_KEY,
-  NEW_RELIC_APP_NAME,
 
   // OpenTelemetry / SigNoz (parallel with New Relic — disable NR later via NEW_RELIC_ENABLED=false)
   OTEL_ENABLED: OTEL_ENABLED === 'true',
@@ -268,10 +255,12 @@ export const _config = {
   DLQ_ALERT_THRESHOLD: parseEnvInt(DLQ_ALERT_THRESHOLD, 20),
 };
 
-// Resolve OTel logs env for pino-opentelemetry-transport (reads process.env directly)
-if (!process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT) {
-  process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT = _config.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
-}
-if (!process.env.OTEL_EXPORTER_OTLP_LOGS_PROTOCOL) {
-  process.env.OTEL_EXPORTER_OTLP_LOGS_PROTOCOL = _config.OTEL_EXPORTER_OTLP_LOGS_PROTOCOL;
+
+if (_config.OTEL_ENABLED) {
+  if (!process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT) {
+    process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT = _config.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
+  }
+  if (!process.env.OTEL_EXPORTER_OTLP_LOGS_PROTOCOL) {
+    process.env.OTEL_EXPORTER_OTLP_LOGS_PROTOCOL = _config.OTEL_EXPORTER_OTLP_LOGS_PROTOCOL;
+  }
 }

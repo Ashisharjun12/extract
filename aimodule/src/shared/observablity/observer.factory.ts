@@ -11,7 +11,7 @@ import { _config } from '../../config/config.js';
  * Reads OBSERVABILITY_PROVIDER from config:
  *   'pino'     → Pino only (structured JSON logs)
  *   'newrelic' → New Relic only (APM + custom events)
- *   'both'     → Pino + New Relic (default)
+ *   'both'     → Pino + New Relic
  *   'signoz'   → Pino + OTel/SigNoz custom metrics
  *   'all'      → Pino + New Relic + OTel/SigNoz (verify SigNoz, then drop NR)
  *
@@ -33,8 +33,9 @@ export class ObserverFactory {
       case 'all':
         return new CompositeObserverProvider([pino, nr, signoz]);
       case 'both':
-      default:
         return new CompositeObserverProvider([pino, nr]);
+      default:
+        return nr;
     }
   }
 }

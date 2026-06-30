@@ -78,7 +78,6 @@ const sharedWorkerOptions = {
 
 const processDocumentJob = async (job: Job): Promise<any> => {
   const { type, urls, correlationId, documentName, documentId } = job.data;
-  console.log("hobdata" , job.data)
   const effectiveCorrelationId = correlationId ?? job.id ?? 'no-context';
   const effectiveDocumentName = documentName ?? 'unknown';
   const effectiveDocumentId = documentId ?? 'unknown';

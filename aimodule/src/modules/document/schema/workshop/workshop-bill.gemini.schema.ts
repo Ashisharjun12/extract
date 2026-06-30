@@ -1,7 +1,5 @@
 import { Schema, Type } from '@google/genai';
 
-// Short keys reduce output tokens by ~25% on dense 300-row bills.
-// Expansion back to full names happens in expandWorkshopShortKeys() before Zod validation.
 const extraColumnItem: Schema = {
   type: Type.OBJECT,
   properties: {
@@ -80,34 +78,6 @@ const labourRowItem: Schema = {
   },
 };
 
-const workshopDetailsProps: Record<string, Schema> = {
-  name: { type: Type.STRING, description: 'Workshop or dealer name' },
-  gstin: { type: Type.STRING, description: 'Workshop GSTIN' },
-  invoiceNumber: { type: Type.STRING, description: 'Invoice, estimate, or bill number' },
-  invoiceDate: { type: Type.STRING, description: 'Invoice or estimate date' },
-  vehicleNumber: { type: Type.STRING, description: 'Vehicle registration number' },
-  documentTitle: { type: Type.STRING, description: 'Title as printed (Estimate, Tax Invoice, etc.)' },
-  jobCardNumber: { type: Type.STRING, description: 'Job card number if present' },
-  customerName: { type: Type.STRING, description: 'Customer or fleet owner name' },
-  odometerReading: { type: Type.STRING, description: 'Odometer / mileage if printed' },
-};
-
-const summaryProps: Record<string, Schema> = {
-  totalPartsAmount: { type: Type.NUMBER, description: 'Total parts/spares amount (pre-tax if split)' },
-  totalLabourAmount: { type: Type.NUMBER, description: 'Total labour amount (pre-tax if split)' },
-  partsSubtotalWithTax: { type: Type.NUMBER, description: 'Spare parts subtotal including tax' },
-  labourSubtotalWithTax: { type: Type.NUMBER, description: 'Labour subtotal including tax' },
-  totalDiscount: { type: Type.NUMBER, description: 'Total discount on bill' },
-  totalGstAmount: { type: Type.NUMBER, description: 'Total GST/tax if single combined figure' },
-  igstRate: { type: Type.NUMBER },
-  igstAmount: { type: Type.NUMBER },
-  cgstRate: { type: Type.NUMBER },
-  cgstAmount: { type: Type.NUMBER },
-  sgstRate: { type: Type.NUMBER },
-  sgstAmount: { type: Type.NUMBER },
-  grandTotal: { type: Type.NUMBER, description: 'Final invoice / estimate total' },
-  amountInWords: { type: Type.STRING, description: 'Amount in words — keep as string, not number' },
-};
 
 const gateRequired = [
   'isCorrectDocumentType',
@@ -117,10 +87,7 @@ const gateRequired = [
   'requiresHumanReview',
 ];
 
-/**
- * Lean schema — gate fields + partsTable + labourTable only.
- * Omits workshopDetails, summary, extraFields to reduce output tokens.
- */
+
 export const WorkshopLeanGeminiSchema: Schema = {
   type: Type.OBJECT,
   properties: {

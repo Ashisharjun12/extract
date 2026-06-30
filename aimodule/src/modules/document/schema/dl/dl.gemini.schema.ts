@@ -1,8 +1,4 @@
-/**
- * Slim Gemini DL schema — only the fields required by platform spec.
- * Spec: Name, Address, DL Number, DOB, Issue Date, Expiry Date,
- *       Vehicle Class, Issuing RTO, Valid up to (Non-Transport).
- */
+
 import { Type, Schema } from '@google/genai';
 
 const str = (): Schema => ({ type: Type.STRING, nullable: true });

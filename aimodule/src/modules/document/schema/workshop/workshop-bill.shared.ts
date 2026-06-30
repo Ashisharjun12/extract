@@ -170,9 +170,7 @@ export function expandWorkshopShortKeys(raw: Record<string, unknown>): Record<st
   };
 }
 
-// ---------------------------------------------------------------------------
-// Cross-table row classification — Toyota/Eicher/BharatBenz misroutes
-// ---------------------------------------------------------------------------
+
 
 function normalizeSac(v: unknown): string {
   return String(v ?? '').replace(/\s/g, '');
@@ -250,14 +248,7 @@ function shouldBePartsRow(code: string, sac: string): boolean {
   return false;
 }
 
-/**
- * Shared-column PDFs (e.g. Maruti/Shakumbari bills) use a single table for both
- * parts and labour rows. Labour rows in that table have ONLY a "Labor Amount"
- * value — quantity, unitPrice, and taxableAmount are all blank.
- *
- * When the AI puts such a row into partsTable (because the item code appeared in
- * the "Part Number" column), we detect it here and move it to labourTable.
- */
+
 function isLabourOnlyRow(row: unknown): boolean {
   const r = row as Record<string, unknown>;
   const qty     = r.q   ?? r.quantity;
@@ -401,8 +392,7 @@ function looksLikeItemCode(v: unknown): boolean {
   if (!s) return false;
   if (/[A-Za-z]/.test(s)) return true;
   // Pure-numeric string: must be a real part code, not an HSN code.
-  // HSN codes are typically exactly 6 or 8 digits (e.g. 87082900, 998714).
-  // Exclude those lengths to avoid treating a misaligned HSN column as an item code.
+
   const digits = s.replace(/\s/g, '');
   if (/^\d{6}$/.test(digits) || /^\d{8}$/.test(digits)) return false;
   // Very long numeric part codes (10+ digits) are valid item codes.
@@ -419,10 +409,6 @@ function fixWrappedSrNoArrayRow(arr: unknown[]): unknown[] {
 
   const srNo = String(arr[0] ?? '').trim();
   const next = String(arr[1] ?? '').trim();
-  // srNo must be 1–2 digits; next must be exactly ONE digit.
-  // Eicher wrapping pattern: "12" + "6" = 126. The wrapped fragment is always
-  // a single trailing digit. Two-digit values like "10" (Upcountry PC column)
-  // or "36" (right-column Sr.No fragment) are NOT wrapped digit continuations.
   if (!/^\d{1,2}$/.test(srNo) || !/^\d{1}$/.test(next)) return arr;
 
   const combined = parseInt(`${srNo}${next}`, 10);
@@ -538,10 +524,7 @@ function filterHsnSummaryRows(rows: Record<string, unknown>[]): Record<string, u
   return rows.filter((row) => !isHsnSummaryRow(row));
 }
 
-/**
- * When AI merges Part No into the description cell, split col[3] back into col[1] + col[3].
- * e.g. "ADHESIVE Local Spare Part Consumable-SEALENT" → pn=ADHESIVE, d=rest.
- */
+
 function rescuePartCodeColumn(arr: unknown[]): unknown[] {
   if (arr.length < 4) return arr;
   const col1 = String(arr[1] ?? '').trim();
@@ -555,22 +538,13 @@ function rescuePartCodeColumn(arr: unknown[]): unknown[] {
   return arr;
 }
 
-/**
- * Fix: flash-lite sometimes skips the UOM column (position 4) when UOM is blank,
- * putting Qty at position 4 and shifting every subsequent column left by one.
- * This makes position 10 = RowType ("PART") instead of TotalPrice → null prices.
- *
- * Detection: position 4 is a pure numeric string (Qty, not UOM) AND position 10
- * is a known RowType keyword instead of a price number.
- */
+
 const KNOWN_ROW_TYPES = new Set(['PART', 'COMBINED', 'LABOUR']);
 
 function fixMissingUomArrayRow(arr: unknown[]): unknown[] {
   if (arr.length < 11) return arr;
   const pos4 = String(arr[4] ?? '').trim();
   const pos10 = String(arr[10] ?? '').trim();
-  // Position 4 looks like a plain number (Qty, not UOM like "NOS"/"KG"/etc.)
-  // AND position 10 is a RowType word → UOM was omitted, columns shifted.
   const pos4IsNumeric = pos4 !== '' && /^\d+(\.\d+)?$/.test(pos4);
   const pos10IsRowType = KNOWN_ROW_TYPES.has(pos10);
   if (pos4IsNumeric && pos10IsRowType) {
@@ -590,7 +564,7 @@ function expandPartsArrayRow(arr: unknown[]): Record<string, unknown> {
     row[k] = coerceVal(fixed[i], PARTS_NUMERIC_IDX.has(i));
   });
   // Sanitize rowType — partsTable only accepts PART or COMBINED.
-  // Flash-lite may output "LABOUR" for cross-table rows; coerce to null (accepted by .nullable()).
+
   const rt = row.rowType as string | null | undefined;
   if (rt && rt !== 'PART' && rt !== 'COMBINED') {
     row.rowType = null;
@@ -606,11 +580,7 @@ function expandPartsArrayRow(arr: unknown[]): Record<string, unknown> {
   return row;
 }
 
-/**
- * Parts-array layout uses UOM at [4], Qty at [5], Rate at [6].
- * Labour-array layout uses Qty at [4], Rate at [5], Gross at [6].
- * When rescuing a misrouted row from partsTable, remap before labour expansion.
- */
+
 function remapPartsArrayRowToLabourArray(fixed: unknown[]): unknown[] {
   const col4 = String(fixed[4] ?? '').trim();
   const col4IsQty = col4 !== '' && /^\d+(\.\d+)?$/.test(col4);
@@ -647,15 +617,7 @@ function expandLabourArrayRow(arr: unknown[]): Record<string, unknown> {
   return row;
 }
 
-/**
- * Convert array-of-arrays Gemini output to full-field-name objects for Zod validation.
- * Compatible with the existing WorkshopBillSchema — no downstream changes needed.
- *
- * Fix B: cross-table rescue — flash-lite occasionally puts parts rows (HSN 87xx) into
- * labourTable or labour rows (HSN 9987xx) into partsTable. Since parts and labour arrays
- * have different positional layouts, a misrouted row must be detected before expansion
- * (position 2 = hsnSac in both layouts) and expanded with the correct function.
- */
+
 export function expandWorkshopArrayRows(raw: Record<string, unknown>): Record<string, unknown> {
   const rawParts = Array.isArray(raw.partsTable) ? (raw.partsTable as unknown[][]) : [];
   const rawLabour = Array.isArray(raw.labourTable) ? (raw.labourTable as unknown[][]) : [];
@@ -692,10 +654,6 @@ export function expandWorkshopArrayRows(raw: Record<string, unknown>): Record<st
     const desc = String(fixed[3] ?? '').trim();
     const rowType = String(fixed[11] ?? '').toUpperCase().trim();
 
-    // Shared-column layout (e.g. Maruti/Shakumbari): labour rows land in partsTable
-    // because the AI sees a code in the "Part Number" column.  Detect them by checking
-    // that parts-specific fields (qty[5], unitPrice[6], taxableAmount[8]) are all blank
-    // while totalPrice[10] has a real positive value.
     const qty      = fixed[5];
     const unitPrice = fixed[6];
     const taxable  = fixed[8];
@@ -730,10 +688,7 @@ export function expandWorkshopArrayRows(raw: Record<string, unknown>): Record<st
   };
 }
 
-/**
- * Returns true when the response uses the new array-of-arrays row format.
- * Detects by checking whether the first row is itself an array.
- */
+
 export function isArrayRowFormat(raw: Record<string, unknown>): boolean {
   if (Array.isArray(raw.partsTable) && raw.partsTable.length > 0) {
     return Array.isArray((raw.partsTable as unknown[])[0]);

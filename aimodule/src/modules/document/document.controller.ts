@@ -52,16 +52,12 @@ export class DocumentController {
     const { type, urls, mode, priority, documentName, documentId } = req.body;
     const finalUrls = resolveUrls(urls);
 
-    console.log(`[aimodule:controller] Incoming request:`, { type, documentName, documentId });
-
     if (!type || finalUrls.length === 0) {
       res.status(400).json({ success: false, message: 'Document type and URL(s) are required.' });
       return;
     }
 
-    // Smart default: RC/DL are fast (2–5 s) → sync by default.
-    // Workshop/Policy are heavy PDFs (20–60 s) → async by default.
-    // Caller can always override with mode: "sync" | "async".
+   
     const typeUpper = (type as string).toUpperCase();
     const smartDefault =
       typeUpper === 'RC' || typeUpper === 'DL' ? 'sync' : 'async';
