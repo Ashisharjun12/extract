@@ -14,6 +14,9 @@ const extractionJobSchema = new mongoose.Schema(
     error: { type: String },
     cached: { type: Boolean, default: false },
     durationMs: { type: Number },
+    completedAt: { type: Date },
+    totalTokens: { type: Number },
+    totalCostINR: { type: Number },
   },
   { timestamps: true },
 );

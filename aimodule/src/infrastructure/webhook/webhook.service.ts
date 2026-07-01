@@ -29,6 +29,8 @@ export interface WebhookPayload {
   error: string | null;
   durationMs: number;
   timestamp: string;
+  totalTokens?: number | null;
+  totalCostINR?: number | null;
 }
 
 const MAX_ATTEMPTS = 3;

@@ -127,6 +127,8 @@ const processDocumentJob = async (job: Job): Promise<any> => {
         error: null,
         durationMs,
         timestamp: new Date().toISOString(),
+        totalTokens: summary?.totalTokens ?? null,
+        totalCostINR: summary?.totalCostINR ?? null,
       });
 
       const urlList = Array.isArray(urls) ? urls : [urls];
@@ -167,6 +169,8 @@ const processDocumentJob = async (job: Job): Promise<any> => {
           error: error?.message ?? 'Unknown extraction error',
           durationMs,
           timestamp: new Date().toISOString(),
+          totalTokens: summary?.totalTokens ?? null,
+          totalCostINR: summary?.totalCostINR ?? null,
         });
       }
 
