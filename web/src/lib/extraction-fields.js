@@ -218,9 +218,13 @@ const POLICY_QUALITY = [
 
 // ── Workshop fields ───────────────────────────────────────────────────────────
 const WORKSHOP_META = [
-  'vehicleNumber', 'vehicleState', 'billType', 'grandTotalVerified',
+  'tableLayout', 'vehicleNumber', 'vehicleState', 'billType', 'grandTotalVerified',
   'isCorrectDocumentType', 'detectedDocumentType', 'hasAllPagesCorrectType',
   'invalidPageIndices', 'confidenceScore', 'requiresHumanReview',
+]
+const LINE_ITEMS_COLUMNS = [
+  'rowIndex', 'rowType', 'sectionHeader', 'itemCode', 'hsnSac', 'description', 'uom',
+  'quantity', 'rate', 'partsCost', 'labourCost', 'taxableAmount', 'taxAmount', 'totalAmount',
 ]
 const PARTS_COLUMNS = [
   'rowIndex', 'srNo', 'partNumber', 'hsnSac', 'description', 'uom', 'quantity',
@@ -370,7 +374,11 @@ export function buildInspectViews(documentType, result) {
     }
 
     case 'WORKSHOP': {
+      const isSequential = result.tableLayout === 'sequential' && (result.lineItemsTable?.length ?? 0) > 0
       const tabs = [
+        ...(isSequential
+          ? [workshopTableTab('lineItems', 'Line items', result.lineItemsTable, LINE_ITEMS_COLUMNS)]
+          : []),
         workshopTableTab('parts', 'Parts table', result.partsTable, PARTS_COLUMNS),
         workshopTableTab('labour', 'Labour table', result.labourTable, LABOUR_COLUMNS),
         fieldTab('quality', 'Quality', pickFieldRows(result, WORKSHOP_META)),
@@ -378,7 +386,7 @@ export function buildInspectViews(documentType, result) {
         allTab,
         jsonTab,
       ].filter(Boolean)
-      return { tabs, defaultTab: 'parts' }
+      return { tabs, defaultTab: isSequential ? 'lineItems' : 'parts' }
     }
 
     default:

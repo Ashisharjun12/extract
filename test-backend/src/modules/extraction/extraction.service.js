@@ -27,6 +27,7 @@ export class ExtractionService {
     urls: directUrls,
     mode,
     priority = 'normal',
+    tableLayout,
     correlationId: providedCorrelationId,
   }) {
     const type = (documentType ?? '').toUpperCase();
@@ -53,6 +54,8 @@ export class ExtractionService {
 
     const extractMode = mode ?? defaultMode(type);
     const extractPriority = ['urgent', 'normal', 'low'].includes(priority) ? priority : 'normal';
+    const extractTableLayout =
+      tableLayout === 'sequential' ? 'sequential' : undefined;
     const correlationId = providedCorrelationId ?? randomUUID();
 
     const job = await ExtractionJob.create({
@@ -62,6 +65,7 @@ export class ExtractionService {
       urls,
       mode: extractMode,
       priority: extractPriority,
+      tableLayout: extractTableLayout,
       status: extractMode === 'async' ? 'queued' : 'processing',
     });
 
@@ -92,6 +96,7 @@ export class ExtractionService {
           priority: extractPriority,
           documentName,
           documentId,
+          ...(extractTableLayout ? { tableLayout: extractTableLayout } : {}),
         },
         {
           headers: {

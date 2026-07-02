@@ -8,6 +8,7 @@ const extractionJobSchema = new mongoose.Schema(
     urls: [{ type: String }],
     mode: { type: String, enum: ['sync', 'async'], default: 'sync' },
     priority: { type: String, enum: ['urgent', 'normal', 'low'], default: 'normal' },
+    tableLayout: { type: String, enum: ['split', 'sequential'] },
     status: { type: String, enum: ['queued', 'processing', 'completed', 'failed'], default: 'queued' },
     jobId: { type: String },
     result: { type: mongoose.Schema.Types.Mixed },

@@ -47,6 +47,7 @@ function resolveRecordId(record) {
 export function DocTestPage({ docType }) {
   const [modeChoice, setModeChoice] = useState('auto')
   const [priority, setPriority] = useState('normal')
+  const [preserveSequence, setPreserveSequence] = useState(false)
   const [files, setFiles] = useState([])
   const [savedUploads, setSavedUploads] = useState([])
   const [selectedUploadIds, setSelectedUploadIds] = useState([])
@@ -127,7 +128,13 @@ export function DocTestPage({ docType }) {
     setExtracting(true)
     try {
       const mode = resolveMode(docType, modeChoice)
-      await startExtraction({ documentType: docType, uploadIds: selectedUploadIds, mode, priority })
+      await startExtraction({
+        documentType: docType,
+        uploadIds: selectedUploadIds,
+        mode,
+        priority,
+        tableLayout: docType === 'WORKSHOP' && preserveSequence ? 'sequential' : undefined,
+      })
       toast.success('Extraction started.')
       setSelectedUploadIds([])
       await fetchJobs(true)
@@ -284,6 +291,23 @@ export function DocTestPage({ docType }) {
                   <NativeSelectOption value="low">Low</NativeSelectOption>
                 </NativeSelect>
               </div>
+              {docType === 'WORKSHOP' ? (
+                <div className="flex items-end pb-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="preserve-sequence"
+                      type="checkbox"
+                      className="cursor-pointer"
+                      checked={preserveSequence}
+                      onChange={(e) => setPreserveSequence(e.target.checked)}
+                      disabled={extracting}
+                    />
+                    <Label htmlFor="preserve-sequence" className="cursor-pointer font-normal">
+                      Preserve PDF sequence (unified table)
+                    </Label>
+                  </div>
+                </div>
+              ) : null}
               <div className="flex items-end">
                 <Button
                   onClick={handleExtract}

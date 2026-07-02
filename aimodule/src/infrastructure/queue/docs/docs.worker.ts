@@ -77,7 +77,7 @@ const sharedWorkerOptions = {
 // Job Processor
 
 const processDocumentJob = async (job: Job): Promise<any> => {
-  const { type, urls, correlationId, documentName, documentId } = job.data;
+  const { type, urls, correlationId, documentName, documentId, tableLayout } = job.data;
   const effectiveCorrelationId = correlationId ?? job.id ?? 'no-context';
   const effectiveDocumentName = documentName ?? 'unknown';
   const effectiveDocumentId = documentId ?? 'unknown';
@@ -96,7 +96,9 @@ const processDocumentJob = async (job: Job): Promise<any> => {
     };
 
     try {
-      const extractedData = await documentService.extractData(type, urls);
+      const extractedData = await documentService.extractData(type, urls, {
+        tableLayout: tableLayout === 'sequential' ? 'sequential' : 'split',
+      });
       const durationMs = Date.now() - startTime;
       const summary = getJobCostSummary();
 
@@ -132,7 +134,9 @@ const processDocumentJob = async (job: Job): Promise<any> => {
       });
 
       const urlList = Array.isArray(urls) ? urls : [urls];
-      void ExtractionResultCache.set(type, urlList, extractedData);
+      void ExtractionResultCache.set(type, urlList, extractedData, {
+        tableLayout: tableLayout === 'sequential' ? 'sequential' : undefined,
+      });
 
       return extractedData;
     } catch (error: any) {

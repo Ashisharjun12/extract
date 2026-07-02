@@ -229,6 +229,50 @@ const EDGE_CASES = `
     col[1] and col[2] may be "" when the PDF has no code/HSN columns.
   • RULE: Descriptions with R&R, Body & Paint, Denting, Body Repair → labourTable (rt=LABOUR).
   • RULE: Do NOT stop extraction after Part Detail — the Labour Detail section on the SAME page is required.
+
+  [EC-7] Honda / mixed P/L sequential layout  (Honda, some insurance temporary estimates)
+  • SYMPTOM: One unified table with a P/L (or L/P) column — "P" = Part, "L" = Labour. Parts and labour
+    rows are INTERLEAVED in document order (e.g. Labour paint row then Part panel row per repair section).
+    Grey-bar section headers like "RHS FENDAR CHANGE - (Body & Paint Work)" appear between groups.
+  • RULE: Extract into lineItemsTable in STRICT document order (page 1 top→bottom, then page 2, etc.).
+    Do NOT split into separate parts/labour buckets — preserve the exact PDF sequence.
+  • RULE: col[1] (P/L) must be "PART" or "LABOUR" — map printed "P"→"PART", "L"→"LABOUR".
+  • RULE: Grey-bar section header rows are NOT data rows — put the header text in col[12] (sectionHeader)
+    on the FIRST data row of that section, or repeat on each row in the section if unclear.
+  • RULE: STOP at Grand Total / SUMMARY page — do not extract HSN-wise tax summary rows.
+`;
+
+export type WorkshopPromptLayout = 'split' | 'sequential';
+
+const SEQUENTIAL_ARRAY_COLUMN_SPEC = `
+  OUTPUT FORMAT — SEQUENTIAL lineItemsTable (ARRAY OF ARRAYS):
+  Extract ALL rows into ONE table: lineItemsTable — strict PDF document order.
+  Each row is a JSON array with values at FIXED positions. Use "" for missing/null values.
+  ALL values must be JSON strings (including numbers: "960.25", "14", "0").
+
+  LINE ITEM ROW [13 positions, 0-indexed]:
+  [0:S.No, 1:P/L(PART|LABOUR), 2:ItemCode, 3:HSN/SAC, 4:Description, 5:UOM,
+   6:Qty, 7:Rate/UnitPrice, 8:Discount, 9:TaxableAmt, 10:TaxAmt(CGST+SGST sum),
+   11:TotalAmt, 12:SectionHeader]
+
+  RULES:
+  • NEVER include column names or object keys — position IS the identity
+  • Numbers as strings: "960.25" not 960.25
+  • Missing column → "" (empty string), NOT null or omit
+  • col[1]: "PART" for P rows, "LABOUR" for L rows — from the PDF P/L column
+  • col[12]: section header text (e.g. "HOOD CHANGE - (Body & Paint Work)") or "" if none
+  • Return ONLY lineItemsTable — do NOT return partsTable or labourTable
+  • See [EC-7] for Honda mixed P/L format
+`;
+
+const SEQUENTIAL_TABLE_RULES = `
+  SEQUENTIAL TABLE RULES:
+  1. Extract EVERY data row in document order into lineItemsTable — no row left behind.
+  2. Preserve interleaved Part/Labour sequence exactly as printed — do NOT reorder by type.
+  3. Multi-column bills (10–17 cols): map to the 13 positions above; unmapped cols may be omitted.
+  4. Numbers: strip ₹, Rs., commas → float/int as strings.
+  5. STOP at Grand Total / SUMMARY block — do not extract HSN-wise tax summary rows.
+  ${EDGE_CASES}
 `;
 
 /**
@@ -258,7 +302,26 @@ export const getWorkshopLeanArraySinglePassPrompt = (): string => `
 /**
  * Lean first-chunk array prompt — gate check + array rows from first page slice.
  */
-export const getWorkshopLeanArrayFirstChunkPrompt = (): string => `
+export const getWorkshopLeanArrayFirstChunkPrompt = (
+  layout: WorkshopPromptLayout = 'split',
+): string => {
+  if (layout === 'sequential') {
+    return `
+  You are an expert Indian workshop bill OCR assistant — GATE CHECK + SEQUENTIAL LINE ITEMS.
+
+  ${GATE_BLOCK}
+
+  If isCorrectDocumentType is false, return empty lineItemsTable and STOP.
+
+  Extract ALL table data rows in STRICT PDF document order as array-of-arrays into lineItemsTable.
+  ${SEQUENTIAL_ARRAY_COLUMN_SPEC}
+  ${SEQUENTIAL_TABLE_RULES}
+
+  Return gate fields + lineItemsTable. Extract EVERY row on these pages in document order.
+`;
+  }
+
+  return `
   You are an expert Indian workshop bill OCR assistant — GATE CHECK + ARRAY ROWS.
 
   ${GATE_BLOCK}
@@ -277,11 +340,32 @@ export const getWorkshopLeanArrayFirstChunkPrompt = (): string => `
 
   Return gate fields + partsTable + labourTable. Extract EVERY row on these pages.
 `;
+};
 
 /**
  * Chunk array prompt — array-format table rows only (no gate fields).
  */
-export const getWorkshopChunkArrayPrompt = (): string => `
+export const getWorkshopChunkArrayPrompt = (
+  layout: WorkshopPromptLayout = 'split',
+): string => {
+  if (layout === 'sequential') {
+    return `
+  You are an expert Indian workshop bill OCR assistant — SEQUENTIAL LINE ITEMS ONLY.
+
+  Extract ONLY table data rows visible on the provided PDF page(s) / slice in document order.
+  No header. No summary. No gate fields.
+  ${SEQUENTIAL_ARRAY_COLUMN_SPEC}
+  ${SEQUENTIAL_TABLE_RULES}
+
+  • lineItemsTable — all rows on these pages in strict top-to-bottom order. Use [] if none.
+  • P/L column: "P"→col[1]="PART", "L"→col[1]="LABOUR"
+  • Continue document order from earlier pages — do NOT restart grouping by type.
+
+  Return ONLY lineItemsTable. Extract EVERY row.
+`;
+  }
+
+  return `
   You are an expert Indian workshop bill OCR assistant — ARRAY TABLE ROWS ONLY.
 
   Extract ONLY table data rows visible on the provided PDF page(s) / slice.
@@ -299,4 +383,5 @@ export const getWorkshopChunkArrayPrompt = (): string => `
 
   Return ONLY partsTable and labourTable. Extract EVERY row.
 `;
+};
 
