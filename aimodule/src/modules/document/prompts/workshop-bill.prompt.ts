@@ -250,10 +250,18 @@ const SEQUENTIAL_ARRAY_COLUMN_SPEC = `
   Each row is a JSON array with values at FIXED positions. Use "" for missing/null values.
   ALL values must be JSON strings (including numbers: "960.25", "14", "0").
 
-  LINE ITEM ROW [13 positions, 0-indexed]:
+  LINE ITEM ROW [13 core + optional extra pairs, 0-indexed]:
   [0:S.No, 1:P/L(PART|LABOUR), 2:ItemCode, 3:HSN/SAC, 4:Description, 5:UOM,
    6:Qty, 7:Rate/UnitPrice, 8:Discount, 9:TaxableAmt, 10:TaxAmt(CGST+SGST sum),
-   11:TotalAmt, 12:SectionHeader]
+   11:TotalAmt, 12:SectionHeader,
+   13+:ExtraCols — alternating header/value pairs for ANY PDF column not mapped above]
+
+  EXTRA COLUMN PAIRS (positions 13+):
+  • col[13]=header, col[14]=value, col[15]=header, col[16]=value, … up to 8 pairs (positions 13–28)
+  • Use the EXACT column header text from the PDF (e.g. "CGST %", "CGST Amount", "Unit Selling Price")
+  • Put ALL columns that do not map to positions 0–11 here — NEVER drop a column
+  • Still sum CGST+SGST into col[10]; also capture separate CGST/SGST cols in extra pairs when present
+  • Stop extra pairs at first empty header (col[13], col[15], … = "")
 
   RULES:
   • NEVER include column names or object keys — position IS the identity
@@ -269,7 +277,7 @@ const SEQUENTIAL_TABLE_RULES = `
   SEQUENTIAL TABLE RULES:
   1. Extract EVERY data row in document order into lineItemsTable — no row left behind.
   2. Preserve interleaved Part/Labour sequence exactly as printed — do NOT reorder by type.
-  3. Multi-column bills (10–17 cols): map to the 13 positions above; unmapped cols may be omitted.
+  3. Multi-column bills (10–17+ cols): map known fields to positions 0–11; ALL unmapped cols → extra pairs at 13+.
   4. Numbers: strip ₹, Rs., commas → float/int as strings.
   5. STOP at Grand Total / SUMMARY block — do not extract HSN-wise tax summary rows.
   ${EDGE_CASES}

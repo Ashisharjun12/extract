@@ -155,7 +155,8 @@ export const WorkshopLeanArraySequentialSchema: Schema = {
     ...documentGateProps,
     lineItemsTable: {
       type: Type.ARRAY,
-      description: 'All line items in strict PDF document order as positional string arrays',
+      description:
+        'Line items in PDF order as positional string arrays — 13 core slots + optional header/value pairs from index 13',
       items: arrayRow,
     },
   },
@@ -168,7 +169,8 @@ export const WorkshopChunkArraySequentialSchema: Schema = {
   properties: {
     lineItemsTable: {
       type: Type.ARRAY,
-      description: 'Line items in document order for this page slice as positional string arrays',
+      description:
+        'Line items in document order — 13 core slots + optional header/value extra pairs from index 13',
       items: arrayRow,
     },
   },

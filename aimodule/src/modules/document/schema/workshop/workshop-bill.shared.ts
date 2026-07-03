@@ -730,7 +730,8 @@ export function isLineItemsArrayFormat(raw: Record<string, unknown>): boolean {
 // ---------------------------------------------------------------------------
 // Sequential line-items array — preserves PDF document order (Honda P/L etc.)
 // [0:s, 1:pl(PART|LABOUR), 2:code, 3:hsn, 4:desc, 5:uom, 6:qty, 7:rate,
-//  8:dis, 9:ta, 10:tx, 11:total, 12:sectionHeader]
+//  8:dis, 9:ta, 10:tx, 11:total, 12:sectionHeader,
+//  13+: extra column pairs — header, value, header, value, … (max 8 pairs)]
 // ---------------------------------------------------------------------------
 
 const LINE_ITEMS_ARRAY_KEYS = [
@@ -739,6 +740,27 @@ const LINE_ITEMS_ARRAY_KEYS = [
 ] as const;
 
 const LINE_ITEMS_NUMERIC_IDX = new Set([0, 6, 7, 8, 9, 10, 11]);
+const LINE_ITEMS_EXTRA_START = 13;
+const LINE_ITEMS_MAX_EXTRA_PAIRS = 8;
+
+function parseLineItemExtraColumnPairs(fixed: unknown[]): { key: string; value: string | null }[] {
+  const extras: { key: string; value: string | null }[] = [];
+  const maxIdx = Math.min(
+    fixed.length,
+    LINE_ITEMS_EXTRA_START + LINE_ITEMS_MAX_EXTRA_PAIRS * 2,
+  );
+  for (let i = LINE_ITEMS_EXTRA_START; i + 1 < maxIdx; i += 2) {
+    const key = String(fixed[i] ?? '').trim();
+    if (!key) break;
+    const raw = fixed[i + 1];
+    if (raw === undefined || raw === null || raw === '' || raw === 'null') {
+      extras.push({ key, value: null });
+    } else {
+      extras.push({ key, value: String(raw) });
+    }
+  }
+  return extras;
+}
 
 function normalizeRowTypeFromPl(v: unknown): 'PART' | 'LABOUR' {
   const s = String(v ?? '').trim().toUpperCase();
@@ -763,7 +785,7 @@ function expandLineItemArrayRow(arr: unknown[]): Record<string, unknown> {
   const total = row.totalAmount as number | null;
   row.partsCost = rt === 'PART' ? total : null;
   row.labourCost = rt === 'LABOUR' ? total : null;
-  row.extraColumns = [];
+  row.extraColumns = parseLineItemExtraColumnPairs(fixed);
   return row;
 }
 

@@ -23,18 +23,7 @@ function parseEnvFloat(value: string | undefined, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-/**
- * All env vars loaded by the app via `_config`.
- *
- * Agent-only (set in .env but NOT exported here — read by New Relic agent directly):
- *   NEW_RELIC_LOG_FILEPATH, NEW_RELIC_LOG_LEVEL, NEW_RELIC_ENABLED,
- *   NEW_RELIC_DISTRIBUTED_TRACING_ENABLED, NEW_RELIC_AI_MONITORING_ENABLED, etc.
- *
- * OTel logs (pino-opentelemetry-transport reads OTEL_EXPORTER_OTLP_LOGS_* from process.env;
- * config.ts backfills OTEL_EXPORTER_OTLP_LOGS_ENDPOINT when unset).
- *
- * Optional fallback (not in .env): GOOGLE_APPLICATION_CREDENTIALS — GCS auth file path.
- */
+
 const {
   PORT,
   NODE_ENV,
