@@ -4,14 +4,14 @@ import { QueueOverloadedError, JobTimeoutError } from '../../../shared/errors/ap
 import { _config } from '../../../config/config.js';
 import { getCorrelationId } from '../../../shared/context/correlation.context.js';
 import { ObserverService } from '../../observabllity/observer.service.js';
-import { deriveContentJobId } from '../../../cost/job-id.util.js';
+import { deriveContentJobId, type ContentJobOptions } from '../../../cost/job-id.util.js';
 import { ExtractionResultCache } from '../../../cost/result-cache.service.js';
 import type { JobPriorityLevel } from '../../../cost/types.js';
 import { AdminService } from '../../../modules/admin/admin.service.js';
 
 export { deriveContentJobId };
 
-export interface EnqueueOptions {
+export interface EnqueueOptions extends ContentJobOptions {
   priorityLevel?: JobPriorityLevel;
   documentName?: string;   // human-readable file/doc name, e.g. 'vehicle_rc_front.jpg'
   documentId?: string;     // DB record ID from caller (e.g. Laravel document ID)
@@ -62,9 +62,12 @@ export class DocsQueueService {
     options: EnqueueOptions = {},
   ): Promise<EnqueueResult> {
     return DocsQueueService.mutex.runExclusive(async () => {
-    const contentJobId = deriveContentJobId(type, urls);
+    const cacheOptions: ContentJobOptions = {
+      tableLayout: options.tableLayout,
+    };
+    const contentJobId = deriveContentJobId(type, urls, cacheOptions);
 
-    const cached = await ExtractionResultCache.get(type, urls);
+    const cached = await ExtractionResultCache.get(type, urls, cacheOptions);
     if (cached != null) {
       return {
         job: { id: contentJobId } as Job,
@@ -85,7 +88,14 @@ export class DocsQueueService {
 
     const job = await queue.add(
       'extract-document',
-      { type, urls, correlationId, documentName: options.documentName ?? 'unknown', documentId: options.documentId ?? 'unknown' },
+      {
+        type,
+        urls,
+        correlationId,
+        documentName: options.documentName ?? 'unknown',
+        documentId: options.documentId ?? 'unknown',
+        tableLayout: options.tableLayout,
+      },
       { priority, jobId: contentJobId },
     );
 

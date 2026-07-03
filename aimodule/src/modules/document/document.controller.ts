@@ -49,7 +49,7 @@ export class DocumentController {
   private docsQueueService = new DocsQueueService();
 
   public extractDocument = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-    const { type, urls, mode, priority, documentName, documentId } = req.body;
+    const { type, urls, mode, priority, documentName, documentId, tableLayout } = req.body;
     const finalUrls = resolveUrls(urls);
 
     if (!type || finalUrls.length === 0) {
@@ -69,6 +69,7 @@ export class DocumentController {
         priorityLevel,
         documentName,
         documentId,
+        tableLayout: tableLayout === 'sequential' ? 'sequential' : undefined,
       });
 
       if (enqueueResult.fromCache && enqueueResult.cachedResult != null) {

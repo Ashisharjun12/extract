@@ -8,6 +8,11 @@ import { ClaimFormExtractor } from './extractor/claim-form.extractor';
 import { DocumentPrescreenService } from './prescreen/document.prescreen.service.js';
 import { AIService } from '../../infrastructure/ai/ai.service';
 import { ObserverService } from '../../infrastructure/observabllity/observer.service.js';
+import type { WorkshopTableLayout } from './extractor/workshop-bill.extractor';
+
+export interface ExtractDataOptions {
+  tableLayout?: WorkshopTableLayout;
+}
 
 const docType = {
   DL: 'DL',
@@ -34,7 +39,11 @@ export class DocumentService {
     this.prescreenService = new DocumentPrescreenService();
   }
 
-  public async extractData(documentType: string, urlOrUrls: string | string[]) {
+  public async extractData(
+    documentType: string,
+    urlOrUrls: string | string[],
+    options: ExtractDataOptions = {},
+  ) {
     // 1. Fetch file(s) from URL(s)
     const urls = Array.isArray(urlOrUrls) ? urlOrUrls : [urlOrUrls];
     const filesData = await Promise.all(urls.map(url => fetchFileFromUrl(url)));
@@ -55,7 +64,9 @@ export class DocumentService {
         case docType.CLAIM:
           return await this.claimExtractor.extract(inputData);
         case docType.WORKSHOP:
-          return await this.workshopExtractor.extract(inputData); 
+          return await this.workshopExtractor.extract(inputData, {
+            tableLayout: options.tableLayout ?? 'split',
+          });
         default:
           throw new Error(`Unsupported document type: ${documentType}`);
       }

@@ -76,13 +76,14 @@ export async function deleteUpload(id) {
   return unwrap(await testerClient.delete(`/api/v1/upload/${id}`))
 }
 
-export async function startExtraction({ documentType, uploadIds, urls, mode, priority }) {
+export async function startExtraction({ documentType, uploadIds, urls, mode, priority, tableLayout }) {
   return unwrap(await testerClient.post('/api/v1/extractions', {
     documentType,
     uploadIds,
     urls,
     mode,
     priority,
+    tableLayout,
   }))
 }
 

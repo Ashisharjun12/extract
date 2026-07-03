@@ -30,10 +30,16 @@ export class WebhookService {
       update.status = 'completed';
       update.result = payload.result ?? null;
       update.error = null;
+      update.completedAt = new Date();
+      if (payload.totalTokens != null) update.totalTokens = payload.totalTokens;
+      if (payload.totalCostINR != null) update.totalCostINR = payload.totalCostINR;
     } else {
       update.status = 'failed';
       update.error = payload.error ?? 'Extraction failed';
       update.result = null;
+      update.completedAt = new Date();
+      if (payload.totalTokens != null) update.totalTokens = payload.totalTokens;
+      if (payload.totalCostINR != null) update.totalCostINR = payload.totalCostINR;
     }
 
     const job = await ExtractionJob.findOneAndUpdate(

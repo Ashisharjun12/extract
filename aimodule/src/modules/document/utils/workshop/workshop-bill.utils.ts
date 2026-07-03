@@ -198,6 +198,24 @@ export function mergeWorkshopTableRows<T extends TableRow>(
   return out;
 }
 
+/** Merge sequential line items — dedupe by position-aware key. */
+export function mergeLineItemsRows<T extends TableRow>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const rt = String(row.rowType ?? '').trim();
+    const code = String(row.itemCode ?? '').trim();
+    const desc = String(row.description ?? '').trim().toLowerCase();
+    const total = row.totalAmount;
+    const key = `${i}|${rt}|${code}|${desc}|${total}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
+}
+
 
 /**
  * Upcountry/Volvo dual-column invoices interleave two Sr.No series in one list

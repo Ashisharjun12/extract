@@ -37,14 +37,23 @@ export function rowSummary(job) {
         tertiary: r.validityNT ?? r.validityT ?? '—',
         confidence: r.confidenceScore,
       }
-    case 'WORKSHOP':
+    case 'WORKSHOP': {
+      const lineItemCount = r.lineItemsTable?.length ?? 0
+      const partsCount = r.partsTable?.length ?? 0
+      const labourCount = r.labourTable?.length ?? 0
+      const detail = r.tableLayout === 'sequential' && lineItemCount > 0
+        ? `${lineItemCount} line items`
+        : `${partsCount} parts · ${labourCount} labour`
       return {
         fileName,
-        primary: r.invoiceNo ?? r.jobCardNo ?? '—',
-        secondary: r.vehicleNo ?? '—',
-        tertiary: r.grandTotal != null ? `₹${r.grandTotal}` : `${r.partsTable?.length ?? 0} parts`,
+        primary: r.invoiceNo ?? r.jobCardNo ?? r.workshopDetails?.invoiceNumber ?? '—',
+        secondary: r.vehicleNo ?? r.vehicleNumber ?? r.workshopDetails?.vehicleNumber ?? '—',
+        tertiary: r.summary?.grandTotal != null
+          ? `₹${r.summary.grandTotal}`
+          : detail,
         confidence: r.confidenceScore,
       }
+    }
     case 'POLICY': {
       const p = normalizePolicyResult(r)
       const reg = p.registrationNo

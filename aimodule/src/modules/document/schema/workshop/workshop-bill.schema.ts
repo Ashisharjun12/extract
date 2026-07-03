@@ -4,6 +4,7 @@ import {
   WorkshopDetailsSchema,
   WorkshopDocumentGateSchema,
   WorkshopLabourRowSchema,
+  WorkshopLineItemRowSchema,
   WorkshopPartsRowSchema,
   WorkshopSummarySchema,
 } from './workshop-bill.shared.js';
@@ -11,6 +12,8 @@ import {
 export const WorkshopBillSchema = WorkshopDocumentGateSchema.extend({
   workshopDetails: WorkshopDetailsSchema,
 
+  tableLayout: z.enum(['split', 'sequential']).optional().default('split'),
+  lineItemsTable: z.array(WorkshopLineItemRowSchema).nullish().default([]),
   partsTable: z.array(WorkshopPartsRowSchema).nullish().default([]),
   labourTable: z.array(WorkshopLabourRowSchema).nullish().default([]),
   summary: WorkshopSummarySchema,

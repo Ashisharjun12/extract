@@ -148,3 +148,32 @@ export const WorkshopChunkArraySchema: Schema = {
   required: ['partsTable', 'labourTable'],
 };
 
+/** Lean single-pass sequential schema — gate + lineItemsTable in document order. */
+export const WorkshopLeanArraySequentialSchema: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    ...documentGateProps,
+    lineItemsTable: {
+      type: Type.ARRAY,
+      description:
+        'Line items in PDF order as positional string arrays — 13 core slots + optional header/value pairs from index 13',
+      items: arrayRow,
+    },
+  },
+  required: gateRequired,
+};
+
+/** Chunk fallback sequential schema — lineItemsTable only (no gate fields). */
+export const WorkshopChunkArraySequentialSchema: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    lineItemsTable: {
+      type: Type.ARRAY,
+      description:
+        'Line items in document order — 13 core slots + optional header/value extra pairs from index 13',
+      items: arrayRow,
+    },
+  },
+  required: ['lineItemsTable'],
+};
+

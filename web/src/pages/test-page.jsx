@@ -47,6 +47,7 @@ function resolveRecordId(record) {
 export function DocTestPage({ docType }) {
   const [modeChoice, setModeChoice] = useState('auto')
   const [priority, setPriority] = useState('normal')
+  const [preserveSequence, setPreserveSequence] = useState(false)
   const [files, setFiles] = useState([])
   const [savedUploads, setSavedUploads] = useState([])
   const [selectedUploadIds, setSelectedUploadIds] = useState([])
@@ -65,8 +66,8 @@ export function DocTestPage({ docType }) {
   const docMeta = getDocMeta(docType)
   const hasPending = jobs.some((j) => j.status === 'queued' || j.status === 'processing')
   const historyColumns = docType === 'POLICY'
-    ? { primary: 'Policy No.', secondary: 'Insurer', tertiary: 'Vehicle · Premium' }
-    : { primary: 'Primary', secondary: 'Secondary', tertiary: 'Detail' }
+    ? { tertiary: 'Vehicle · Premium' }
+    : { tertiary: 'Detail' }
 
   const fetchJobs = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
@@ -127,7 +128,13 @@ export function DocTestPage({ docType }) {
     setExtracting(true)
     try {
       const mode = resolveMode(docType, modeChoice)
-      await startExtraction({ documentType: docType, uploadIds: selectedUploadIds, mode, priority })
+      await startExtraction({
+        documentType: docType,
+        uploadIds: selectedUploadIds,
+        mode,
+        priority,
+        tableLayout: docType === 'WORKSHOP' && preserveSequence ? 'sequential' : undefined,
+      })
       toast.success('Extraction started.')
       setSelectedUploadIds([])
       await fetchJobs(true)
@@ -284,6 +291,23 @@ export function DocTestPage({ docType }) {
                   <NativeSelectOption value="low">Low</NativeSelectOption>
                 </NativeSelect>
               </div>
+              {docType === 'WORKSHOP' ? (
+                <div className="flex items-end pb-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="preserve-sequence"
+                      type="checkbox"
+                      className="cursor-pointer"
+                      checked={preserveSequence}
+                      onChange={(e) => setPreserveSequence(e.target.checked)}
+                      disabled={extracting}
+                    />
+                    <Label htmlFor="preserve-sequence" className="cursor-pointer font-normal">
+                      Preserve PDF sequence (unified table)
+                    </Label>
+                  </div>
+                </div>
+              ) : null}
               <div className="flex items-end">
                 <Button
                   onClick={handleExtract}
@@ -388,11 +412,12 @@ export function DocTestPage({ docType }) {
                   <TableRow>
                     <TableHead>File</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>{historyColumns.primary}</TableHead>
-                    <TableHead>{historyColumns.secondary}</TableHead>
                     <TableHead>{historyColumns.tertiary}</TableHead>
                     <TableHead>Confidence</TableHead>
                     <TableHead>Time</TableHead>
+                    <TableHead>Completed At</TableHead>
+                    <TableHead>Total Tokens</TableHead>
+                    <TableHead>Cost (₹)</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -405,14 +430,21 @@ export function DocTestPage({ docType }) {
                         <TableCell>
                           <Badge variant={STATUS_VARIANT[job.status] ?? 'outline'}>{job.status}</Badge>
                         </TableCell>
-                        <TableCell className="max-w-[120px] truncate">{s.primary}</TableCell>
-                        <TableCell className="max-w-[120px] truncate">{s.secondary}</TableCell>
                         <TableCell className="max-w-[120px] truncate">{s.tertiary}</TableCell>
                         <TableCell className="tabular-nums">
                           {s.confidence != null ? s.confidence.toFixed(2) : '—'}
                         </TableCell>
-                        <TableCell className="text-xs text-muted-foreground">
+                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
                           {job.createdAt ? new Date(job.createdAt).toLocaleString() : '—'}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                          {job.completedAt ? new Date(job.completedAt).toLocaleString() : '—'}
+                        </TableCell>
+                        <TableCell className="tabular-nums text-xs">
+                          {job.totalTokens != null ? job.totalTokens.toLocaleString() : '—'}
+                        </TableCell>
+                        <TableCell className="tabular-nums text-xs">
+                          {job.totalCostINR != null ? `₹${job.totalCostINR.toFixed(4)}` : '—'}
                         </TableCell>
                         <TableCell className="text-right">
                           <DropdownMenu>

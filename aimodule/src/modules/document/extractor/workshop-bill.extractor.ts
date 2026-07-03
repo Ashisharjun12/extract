@@ -4,7 +4,9 @@ import { UnrecoverableDocumentError } from '../../../shared/errors/document.erro
 import { WorkshopBillSchema } from '../schema/workshop/workshop-bill.schema';
 import {
   WorkshopChunkArraySchema,
+  WorkshopChunkArraySequentialSchema,
   WorkshopLeanArraySchema,
+  WorkshopLeanArraySequentialSchema,
 } from '../schema/workshop/workshop-bill.gemini.schema';
 import {
   getWorkshopChunkArrayPrompt,
@@ -18,6 +20,7 @@ import {
   normaliseVehicleNo,
   resolveSummaryPartsLabour,
   mergeWorkshopTableRows,
+  mergeLineItemsRows,
   resequenceTableSerials,
   assignTableRowIndexes,
 } from '../utils/workshop/workshop-bill.utils';
@@ -41,8 +44,16 @@ import { resolveDocumentPageCount } from '../../../utils/document-page-count.uti
 import {
   expandWorkshopShortKeys,
   expandWorkshopArrayRows,
+  expandLineItemsArrayRows,
   isArrayRowFormat,
+  isLineItemsArrayFormat,
 } from '../schema/workshop/workshop-bill.shared.js';
+
+export type WorkshopTableLayout = 'split' | 'sequential';
+
+export interface WorkshopExtractOptions {
+  tableLayout?: WorkshopTableLayout;
+}
 
 type WorkshopRawResult = Record<string, unknown>;
 
@@ -50,6 +61,11 @@ type LeanChunkExtractResult = {
   raw: WorkshopRawResult;
   parts: Record<string, unknown>[];
   labour: Record<string, unknown>[];
+};
+
+type LeanSequentialChunkExtractResult = {
+  raw: WorkshopRawResult;
+  lineItems: Record<string, unknown>[];
 };
 
 export class WorkshopBillExtractor {
@@ -60,14 +76,17 @@ export class WorkshopBillExtractor {
     this.aiService = AIService.getInstance();
   }
 
-  private parseWorkshopResult(raw: unknown) {
+  private parseWorkshopResult(raw: unknown, tableLayout: WorkshopTableLayout = 'split') {
     try {
       const obj = raw as Record<string, unknown>;
-      // Array-of-arrays format (lean mode) — expand positional arrays to named objects
-      // before Zod validation; object format uses short-key expansion as before.
-      const expanded = isArrayRowFormat(obj)
-        ? expandWorkshopArrayRows(obj)
-        : expandWorkshopShortKeys(obj);
+      const expanded =
+        tableLayout === 'sequential'
+          ? expandLineItemsArrayRows(obj)
+          : isLineItemsArrayFormat(obj)
+            ? expandLineItemsArrayRows(obj)
+            : isArrayRowFormat(obj)
+              ? expandWorkshopArrayRows(obj)
+              : expandWorkshopShortKeys(obj);
       return WorkshopBillSchema.parse(expanded);
     } catch (e) {
       if (e instanceof ZodError) {
@@ -184,8 +203,19 @@ export class WorkshopBillExtractor {
     pageIndices: number[],
     isFirst: boolean,
     cacheSuffix: string,
+    tableLayout: WorkshopTableLayout = 'split',
     modelOverride?: string,
-  ): Promise<LeanChunkExtractResult> {
+  ): Promise<LeanChunkExtractResult | LeanSequentialChunkExtractResult> {
+    if (tableLayout === 'sequential') {
+      return this.runSingleLeanSequentialChunkExtract(
+        inputData,
+        pageIndices,
+        isFirst,
+        cacheSuffix,
+        modelOverride,
+      );
+    }
+
     const chunkModel = modelOverride ?? _config.WORKSHOP_CHUNK_AI_MODEL;
     const chunkTokens = computeWorkshopMaxTokens(
       pageIndices.length,
@@ -219,6 +249,43 @@ export class WorkshopBillExtractor {
     }
   }
 
+  private async runSingleLeanSequentialChunkExtract(
+    inputData: unknown,
+    pageIndices: number[],
+    isFirst: boolean,
+    cacheSuffix: string,
+    modelOverride?: string,
+  ): Promise<LeanSequentialChunkExtractResult> {
+    const chunkModel = modelOverride ?? _config.WORKSHOP_CHUNK_AI_MODEL;
+    const chunkTokens = computeWorkshopMaxTokens(
+      pageIndices.length,
+      _config.WORKSHOP_MAX_OUTPUT_TOKENS,
+    );
+
+    const slice = await buildSliceInput(inputData, pageIndices, cacheSuffix);
+    try {
+      const chunk = (await this.callGemini(
+        slice.input,
+        isFirst
+          ? getWorkshopLeanArrayFirstChunkPrompt('sequential')
+          : getWorkshopChunkArrayPrompt('sequential'),
+        isFirst ? WorkshopLeanArraySequentialSchema : WorkshopChunkArraySequentialSchema,
+        chunkTokens,
+        cacheSuffix,
+        chunkModel,
+      )) as WorkshopRawResult;
+
+      const expanded = expandLineItemsArrayRows(chunk);
+      const lineItems = Array.isArray(expanded.lineItemsTable)
+        ? (expanded.lineItemsTable as Record<string, unknown>[])
+        : [];
+
+      return { raw: chunk, lineItems };
+    } finally {
+      await slice.dispose();
+    }
+  }
+
   /**
    * Extract one chunk; if flash-lite stops early, retry each page in the chunk separately.
    * Only splits when multi-page chunk looks truncated — keeps cost low for normal bills.
@@ -229,12 +296,13 @@ export class WorkshopBillExtractor {
     chunkIndex: number,
     totalPageCount: number,
     isFirst: boolean,
-  ): Promise<LeanChunkExtractResult> {
+    tableLayout: WorkshopTableLayout = 'split',
+  ): Promise<LeanChunkExtractResult | LeanSequentialChunkExtractResult> {
     const pageStart = pageIndices[0];
     const pageEnd = pageIndices[pageIndices.length - 1];
 
     this.obs.info(
-      `WorkshopBillExtractor: Lean chunk ${chunkIndex + 1} — pages ${pageStart}–${pageEnd}`,
+      `WorkshopBillExtractor: Lean chunk ${chunkIndex + 1} — pages ${pageStart}–${pageEnd} (${tableLayout})`,
     );
 
     let initial = await this.runSingleLeanChunkExtract(
@@ -242,20 +310,34 @@ export class WorkshopBillExtractor {
       pageIndices,
       isFirst,
       `WORKSHOP-LEAN-CHUNK-${chunkIndex + 1}`,
+      tableLayout,
     );
-    let initialRows = initial.parts.length + initial.labour.length;
+
+    if (tableLayout === 'sequential') {
+      return this.extractLeanSequentialChunkResilient(
+        inputData,
+        pageIndices,
+        chunkIndex,
+        totalPageCount,
+        isFirst,
+        initial as LeanSequentialChunkExtractResult,
+      );
+    }
+
+    const splitInitial = initial as LeanChunkExtractResult;
+    let initialRows = splitInitial.parts.length + splitInitial.labour.length;
 
     let isTruncated = this.isChunkSoftTruncated(initialRows, pageIndices, chunkIndex, totalPageCount);
-    if (!isTruncated && this.hasSerialGaps(initial.parts, initial.labour)) {
+    if (!isTruncated && this.hasSerialGaps(splitInitial.parts, splitInitial.labour)) {
       this.obs.warn(
         `WorkshopBillExtractor: Gap in serial numbers detected on initial chunk ${chunkIndex + 1}. Marking as truncated.`,
-        { parts: initial.parts.length, labour: initial.labour.length }
+        { parts: splitInitial.parts.length, labour: splitInitial.labour.length }
       );
       isTruncated = true;
     }
 
     if (!isTruncated) {
-      return initial;
+      return splitInitial;
     }
 
     // Single-page chunk truncation fallback: retry with the Pro model (WORKSHOP_AI_MODEL)
@@ -272,8 +354,9 @@ export class WorkshopBillExtractor {
             pageIndices,
             isFirst,
             `WORKSHOP-LEAN-CHUNK-${chunkIndex + 1}-PRO`,
+            'split',
             proModel,
-          );
+          ) as LeanChunkExtractResult;
           const proRows = proResult.parts.length + proResult.labour.length;
           if (proRows > initialRows) {
             this.obs.info(
@@ -285,7 +368,7 @@ export class WorkshopBillExtractor {
           this.obs.warn(`WorkshopBillExtractor: Pro model fallback failed for page ${pageStart}, using initial Lite results`, { error: e });
         }
       }
-      return initial;
+      return splitInitial;
     }
 
     this.obs.warn(
@@ -296,7 +379,7 @@ export class WorkshopBillExtractor {
 
     const mergedParts: Record<string, unknown>[] = [];
     const mergedLabour: Record<string, unknown>[] = [];
-    let gateRaw = initial.raw;
+    let gateRaw = splitInitial.raw;
 
     for (let p = 0; p < pageIndices.length; p++) {
       const singlePage = [pageIndices[p]];
@@ -306,7 +389,8 @@ export class WorkshopBillExtractor {
         singlePage,
         pageIsFirst,
         `WORKSHOP-LEAN-CHUNK-${chunkIndex + 1}P${pageIndices[p]}`,
-      );
+        'split',
+      ) as LeanChunkExtractResult;
 
       // If a single page run has serial number gaps or output truncation zones (e.g. >= 15 rows),
       // we retry it with the Pro model.
@@ -323,8 +407,9 @@ export class WorkshopBillExtractor {
               singlePage,
               pageIsFirst,
               `WORKSHOP-LEAN-CHUNK-${chunkIndex + 1}P${pageIndices[p]}-PRO`,
+              'split',
               proModel,
-            );
+            ) as LeanChunkExtractResult;
             const proRows = proSub.parts.length + proSub.labour.length;
             if (proRows > subRows) {
               this.obs.info(
@@ -339,8 +424,6 @@ export class WorkshopBillExtractor {
       }
 
       if (pageIsFirst) gateRaw = sub.raw;
-      // Re-sequence page results so serial numbers continue from where the
-      // previous page left off (handles AI restarting from 1 per page).
       resequenceTableSerials(sub.parts, this.maxSerialFromRows(mergedParts));
       resequenceTableSerials(sub.labour, this.maxSerialFromRows(mergedLabour));
       mergedParts.push(...sub.parts);
@@ -350,19 +433,137 @@ export class WorkshopBillExtractor {
     return { raw: gateRaw, parts: mergedParts, labour: mergedLabour };
   }
 
+  private async extractLeanSequentialChunkResilient(
+    inputData: unknown,
+    pageIndices: number[],
+    chunkIndex: number,
+    totalPageCount: number,
+    isFirst: boolean,
+    initial: LeanSequentialChunkExtractResult,
+  ): Promise<LeanSequentialChunkExtractResult> {
+    const pageStart = pageIndices[0];
+    let initialRows = initial.lineItems.length;
+
+    let isTruncated = this.isChunkSoftTruncated(initialRows, pageIndices, chunkIndex, totalPageCount);
+    if (!isTruncated && this.hasSerialGapsForTable(initial.lineItems)) {
+      this.obs.warn(
+        `WorkshopBillExtractor: Gap in serial numbers on sequential chunk ${chunkIndex + 1}. Marking as truncated.`,
+        { lineItems: initialRows },
+      );
+      isTruncated = true;
+    }
+
+    if (!isTruncated) {
+      return initial;
+    }
+
+    if (pageIndices.length <= 1) {
+      const proModel = _config.WORKSHOP_AI_MODEL;
+      if (proModel && proModel !== _config.WORKSHOP_CHUNK_AI_MODEL) {
+        try {
+          const proResult = await this.runSingleLeanChunkExtract(
+            inputData,
+            pageIndices,
+            isFirst,
+            `WORKSHOP-LEAN-CHUNK-${chunkIndex + 1}-PRO`,
+            'sequential',
+            proModel,
+          ) as LeanSequentialChunkExtractResult;
+          if (proResult.lineItems.length > initialRows) {
+            return proResult;
+          }
+        } catch (e) {
+          this.obs.warn(`WorkshopBillExtractor: Sequential Pro fallback failed for page ${pageStart}`, { error: e });
+        }
+      }
+      return initial;
+    }
+
+    this.obs.warn(
+      `WorkshopBillExtractor: Sequential chunk ${chunkIndex + 1} soft-truncated (${initialRows} rows) — retrying page-by-page.`,
+      { pageIndices, initialRows },
+    );
+
+    const mergedLineItems: Record<string, unknown>[] = [];
+    let gateRaw = initial.raw;
+
+    for (let p = 0; p < pageIndices.length; p++) {
+      const singlePage = [pageIndices[p]];
+      const pageIsFirst = isFirst && p === 0;
+      const sub = await this.runSingleLeanChunkExtract(
+        inputData,
+        singlePage,
+        pageIsFirst,
+        `WORKSHOP-LEAN-CHUNK-${chunkIndex + 1}P${pageIndices[p]}`,
+        'sequential',
+      ) as LeanSequentialChunkExtractResult;
+
+      if (pageIsFirst) gateRaw = sub.raw;
+      mergedLineItems.push(...sub.lineItems);
+    }
+
+    return { raw: gateRaw, lineItems: mergedLineItems };
+  }
+
   /**
    * Lean chunk fallback — skips separate meta pass.
    * First chunk includes gate check; subsequent chunks extract tables only.
    * Saves 1 Gemini API call vs full chunk fallback.
    */
-  private async extractChunkFallbackLean(inputData: unknown, pageCount: number): Promise<WorkshopRawResult> {
+  private async extractChunkFallbackLean(
+    inputData: unknown,
+    pageCount: number,
+    tableLayout: WorkshopTableLayout = 'split',
+  ): Promise<WorkshopRawResult> {
     const chunkSize = _config.WORKSHOP_CHUNK_PAGE_SIZE;
     const chunks = buildPageChunks(pageCount, chunkSize);
 
     this.obs.info(
-      `WorkshopBillExtractor: Lean chunk mode — ${pageCount} page(s), ${chunks.length} slice(s), ` +
-      `${chunkSize} pages/chunk, model=${_config.WORKSHOP_CHUNK_AI_MODEL}`,
+      `WorkshopBillExtractor: Lean chunk mode (${tableLayout}) — ${pageCount} page(s), ` +
+      `${chunks.length} slice(s), ${chunkSize} pages/chunk, model=${_config.WORKSHOP_CHUNK_AI_MODEL}`,
     );
+
+    if (tableLayout === 'sequential') {
+      const allLineItems: Record<string, unknown>[] = [];
+      let gateResult: WorkshopRawResult | undefined;
+
+      for (let i = 0; i < chunks.length; i++) {
+        const pageIndices = chunks[i];
+        const isFirst = i === 0;
+
+        const result = await this.extractLeanChunkResilient(
+          inputData,
+          pageIndices,
+          i,
+          pageCount,
+          isFirst,
+          'sequential',
+        ) as LeanSequentialChunkExtractResult;
+
+        if (isFirst) {
+          gateResult = result.raw;
+          enforceDocumentTypeGates(result.raw, {
+            extractorName: 'WorkshopBillExtractor',
+            wrongTypeMessage: (typeStr) =>
+              `The uploaded document appears to be a "${typeStr}", not a Workshop Bill. ` +
+              'Please upload a valid repair/service bill, proforma estimate, or job card.',
+            mixedBatchMessage: (pageList) =>
+              `Mixed document batch detected for Workshop Bill extraction. ${pageList} ` +
+              'Please ensure all uploaded pages belong to the same workshop bill or repair estimate.',
+          });
+        }
+
+        allLineItems.push(...result.lineItems);
+      }
+
+      const mergedLineItems = mergeLineItemsRows(allLineItems);
+
+      return {
+        ...(gateResult ?? {}),
+        tableLayout: 'sequential',
+        lineItemsTable: mergedLineItems,
+      };
+    }
 
     const allParts: Record<string, unknown>[] = [];
     const allLabour: Record<string, unknown>[] = [];
@@ -378,7 +579,8 @@ export class WorkshopBillExtractor {
         i,
         pageCount,
         isFirst,
-      );
+        'split',
+      ) as LeanChunkExtractResult;
 
       if (isFirst) {
         gateResult = result.raw;
@@ -393,8 +595,6 @@ export class WorkshopBillExtractor {
         });
       }
 
-      // Re-sequence this lean chunk's rows so serial numbers continue from
-      // where the previous chunk left off (handles AI restarting from 1 per chunk).
       resequenceTableSerials(result.parts, this.maxSerialFromRows(allParts));
       resequenceTableSerials(result.labour, this.maxSerialFromRows(allLabour));
       allParts.push(...result.parts);
@@ -426,6 +626,7 @@ export class WorkshopBillExtractor {
 
     return {
       ...(gateResult ?? {}),
+      tableLayout: 'split',
       partsTable: mergedParts,
       labourTable: mergedLabour,
     };
@@ -434,25 +635,33 @@ export class WorkshopBillExtractor {
   private async extractWithFallback(
     inputData: unknown,
     pageCount: number,
+    tableLayout: WorkshopTableLayout = 'split',
   ): Promise<WorkshopRawResult> {
-    return this.extractChunkFallbackLean(inputData, pageCount);
+    return this.extractChunkFallbackLean(inputData, pageCount, tableLayout);
   }
 
-  public async extract(inputData: unknown) {
+  public async extract(
+    inputData: unknown,
+    options: WorkshopExtractOptions = {},
+  ) {
+    const tableLayout = options.tableLayout ?? 'split';
     const fileCount = Array.isArray(inputData) ? inputData.length : 1;
     const pageCount = resolveDocumentPageCount(inputData);
 
     this.obs.info(
-      `WorkshopBillExtractor: Starting extraction — ${fileCount} file(s), ${pageCount} PDF page(s)`,
+      `WorkshopBillExtractor: Starting extraction — ${fileCount} file(s), ` +
+      `${pageCount} PDF page(s), tableLayout=${tableLayout}`,
     );
 
-    const rawResult = await this.extractWithFallback(inputData, pageCount);
+    const rawResult = await this.extractWithFallback(inputData, pageCount, tableLayout);
 
     this.obs.info('WorkshopBillExtractor: Raw extraction complete, validating with Zod schema...');
 
-    const parsedResult = this.parseWorkshopResult(rawResult);
+    const parsedResult = this.parseWorkshopResult(rawResult, tableLayout);
 
-    // Final pass — rowIndex 1..N for UI; srNo stays as printed (or null if no serial column).
+    if (Array.isArray(parsedResult.lineItemsTable) && parsedResult.lineItemsTable.length > 0) {
+      assignTableRowIndexes(parsedResult.lineItemsTable as Record<string, unknown>[]);
+    }
     if (Array.isArray(parsedResult.partsTable) && parsedResult.partsTable.length > 0) {
       assignTableRowIndexes(parsedResult.partsTable as Record<string, unknown>[]);
     }
@@ -463,7 +672,8 @@ export class WorkshopBillExtractor {
     const confidence = parsedResult.confidenceScore ?? 0;
     const hasPartsOrLabour =
       (parsedResult.partsTable?.length ?? 0) > 0 ||
-      (parsedResult.labourTable?.length ?? 0) > 0;
+      (parsedResult.labourTable?.length ?? 0) > 0 ||
+      (parsedResult.lineItemsTable?.length ?? 0) > 0;
 
     const hasWorkshopIdentity =
       !isEffectivelyEmpty(parsedResult.workshopDetails?.name) ||
@@ -525,6 +735,7 @@ export class WorkshopBillExtractor {
 
     const enriched = {
       ...parsedResult,
+      tableLayout: parsedResult.tableLayout ?? tableLayout,
       vehicleNumber: normVehicleNo ?? rawVehicle,
       vehicleState,
       billType,
@@ -537,6 +748,8 @@ export class WorkshopBillExtractor {
     this.obs.info(
       `WorkshopBillExtractor: Extraction successful — ` +
       `pages=${pageCount}, ` +
+      `layout=${tableLayout}, ` +
+      `lineItems=${parsedResult.lineItemsTable?.length ?? 0}, ` +
       `parts=${parsedResult.partsTable?.length ?? 0}, ` +
       `labour=${parsedResult.labourTable?.length ?? 0}, ` +
       `billType=${billType}, ` +

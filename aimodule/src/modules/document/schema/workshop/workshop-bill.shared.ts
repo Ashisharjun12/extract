@@ -59,6 +59,26 @@ export const WorkshopLabourRowSchema = z.object({
   extraColumns: z.array(ExtraColumnSchema).nullish().default([]),
 });
 
+export const WorkshopLineItemRowSchema = z.object({
+  rowIndex: workshopNumeric.optional(),
+  srNo: workshopNumeric.nullable().optional(),
+  rowType: z.enum(['PART', 'LABOUR']),
+  sectionHeader: z.string().nullable().optional(),
+  itemCode: z.string().nullable().optional(),
+  hsnSac: z.string().nullable().optional(),
+  description: z.string().nullable().optional(),
+  uom: z.string().nullable().optional(),
+  quantity: workshopNumeric.optional(),
+  rate: workshopNumeric.optional(),
+  partsCost: workshopNumeric.nullable().optional(),
+  labourCost: workshopNumeric.nullable().optional(),
+  discount: workshopNumeric.optional(),
+  taxableAmount: workshopNumeric.optional(),
+  taxAmount: workshopNumeric.optional(),
+  totalAmount: workshopNumeric.optional(),
+  extraColumns: z.array(ExtraColumnSchema).nullish().default([]),
+});
+
 export const WorkshopSummarySchema = z.object({
   totalPartsAmount: workshopNumeric.optional(),
   totalLabourAmount: workshopNumeric.optional(),
@@ -690,6 +710,9 @@ export function expandWorkshopArrayRows(raw: Record<string, unknown>): Record<st
 
 
 export function isArrayRowFormat(raw: Record<string, unknown>): boolean {
+  if (Array.isArray(raw.lineItemsTable) && raw.lineItemsTable.length > 0) {
+    return Array.isArray((raw.lineItemsTable as unknown[])[0]);
+  }
   if (Array.isArray(raw.partsTable) && raw.partsTable.length > 0) {
     return Array.isArray((raw.partsTable as unknown[])[0]);
   }
@@ -697,4 +720,144 @@ export function isArrayRowFormat(raw: Record<string, unknown>): boolean {
     return Array.isArray((raw.labourTable as unknown[])[0]);
   }
   return false;
+}
+
+export function isLineItemsArrayFormat(raw: Record<string, unknown>): boolean {
+  return Array.isArray(raw.lineItemsTable) && raw.lineItemsTable.length > 0
+    && Array.isArray((raw.lineItemsTable as unknown[])[0]);
+}
+
+// ---------------------------------------------------------------------------
+// Sequential line-items array — preserves PDF document order (Honda P/L etc.)
+// [0:s, 1:pl(PART|LABOUR), 2:code, 3:hsn, 4:desc, 5:uom, 6:qty, 7:rate,
+//  8:dis, 9:ta, 10:tx, 11:total, 12:sectionHeader,
+//  13+: extra column pairs — header, value, header, value, … (max 8 pairs)]
+// ---------------------------------------------------------------------------
+
+const LINE_ITEMS_ARRAY_KEYS = [
+  'srNo', 'rowType', 'itemCode', 'hsnSac', 'description', 'uom', 'quantity', 'rate',
+  'discount', 'taxableAmount', 'taxAmount', 'totalAmount', 'sectionHeader',
+] as const;
+
+const LINE_ITEMS_NUMERIC_IDX = new Set([0, 6, 7, 8, 9, 10, 11]);
+const LINE_ITEMS_EXTRA_START = 13;
+const LINE_ITEMS_MAX_EXTRA_PAIRS = 8;
+
+function parseLineItemExtraColumnPairs(fixed: unknown[]): { key: string; value: string | null }[] {
+  const extras: { key: string; value: string | null }[] = [];
+  const maxIdx = Math.min(
+    fixed.length,
+    LINE_ITEMS_EXTRA_START + LINE_ITEMS_MAX_EXTRA_PAIRS * 2,
+  );
+  for (let i = LINE_ITEMS_EXTRA_START; i + 1 < maxIdx; i += 2) {
+    const key = String(fixed[i] ?? '').trim();
+    if (!key) break;
+    const raw = fixed[i + 1];
+    if (raw === undefined || raw === null || raw === '' || raw === 'null') {
+      extras.push({ key, value: null });
+    } else {
+      extras.push({ key, value: String(raw) });
+    }
+  }
+  return extras;
+}
+
+function normalizeRowTypeFromPl(v: unknown): 'PART' | 'LABOUR' {
+  const s = String(v ?? '').trim().toUpperCase();
+  if (s === 'L' || s === 'LABOUR' || s === 'LABOR') return 'LABOUR';
+  return 'PART';
+}
+
+function expandLineItemArrayRow(arr: unknown[]): Record<string, unknown> {
+  const afterPc = stripPcColumn(arr);
+  const afterCode = rescuePartCodeColumn(afterPc);
+  const afterSrFix = fixWrappedSrNoArrayRow(afterCode);
+  const fixed = fixMissingUomArrayRow(afterSrFix);
+  const row: Record<string, unknown> = {};
+  LINE_ITEMS_ARRAY_KEYS.forEach((k, i) => {
+    if (k === 'rowType') {
+      row[k] = normalizeRowTypeFromPl(fixed[i]);
+      return;
+    }
+    row[k] = coerceVal(fixed[i], LINE_ITEMS_NUMERIC_IDX.has(i));
+  });
+  const rt = row.rowType as 'PART' | 'LABOUR';
+  const total = row.totalAmount as number | null;
+  row.partsCost = rt === 'PART' ? total : null;
+  row.labourCost = rt === 'LABOUR' ? total : null;
+  row.extraColumns = parseLineItemExtraColumnPairs(fixed);
+  return row;
+}
+
+export function expandLineItemsArrayRows(raw: Record<string, unknown>): Record<string, unknown> {
+  const rawItems = Array.isArray(raw.lineItemsTable) ? raw.lineItemsTable : [];
+  let lineItemsTable: Record<string, unknown>[];
+
+  if (rawItems.length > 0 && Array.isArray(rawItems[0])) {
+    lineItemsTable = (rawItems as unknown[][])
+      .map((row) => expandLineItemArrayRow(row))
+      .filter((row) => {
+        const desc = String(row.description ?? '').trim();
+        const code = String(row.itemCode ?? '').trim();
+        const total = Number(row.totalAmount ?? 0);
+        return (desc.length > 0 || code.length > 0) && (total > 0 || Number(row.taxableAmount ?? 0) > 0);
+      });
+  } else {
+    lineItemsTable = rawItems as Record<string, unknown>[];
+  }
+
+  const { partsTable, labourTable } = deriveSplitTablesFromLineItems(lineItemsTable);
+  return {
+    ...raw,
+    tableLayout: 'sequential',
+    lineItemsTable,
+    partsTable,
+    labourTable,
+  };
+}
+
+export function deriveSplitTablesFromLineItems(
+  lineItems: Record<string, unknown>[],
+): { partsTable: Record<string, unknown>[]; labourTable: Record<string, unknown>[] } {
+  const partsTable: Record<string, unknown>[] = [];
+  const labourTable: Record<string, unknown>[] = [];
+
+  for (const item of lineItems) {
+    const rt = item.rowType as string;
+    if (rt === 'LABOUR') {
+      labourTable.push({
+        srNo: item.srNo,
+        labourCode: item.itemCode,
+        hsnSac: item.hsnSac,
+        description: item.description,
+        quantityOrHours: item.quantity,
+        rate: item.rate,
+        grossAmount: item.taxableAmount,
+        discount: item.discount,
+        taxableAmount: item.taxableAmount,
+        taxAmount: item.taxAmount,
+        totalAmount: item.totalAmount,
+        rowType: 'LABOUR',
+        extraColumns: item.extraColumns ?? [],
+      });
+    } else {
+      partsTable.push({
+        srNo: item.srNo,
+        partNumber: item.itemCode,
+        hsnSac: item.hsnSac,
+        description: item.description,
+        uom: item.uom,
+        quantity: item.quantity,
+        unitPrice: item.rate,
+        discount: item.discount,
+        taxableAmount: item.taxableAmount,
+        taxAmount: item.taxAmount,
+        totalPrice: item.totalAmount,
+        rowType: 'PART',
+        extraColumns: item.extraColumns ?? [],
+      });
+    }
+  }
+
+  return { partsTable, labourTable };
 }
