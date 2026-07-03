@@ -55,7 +55,9 @@ export class ExtractionService {
     const extractMode = mode ?? defaultMode(type);
     const extractPriority = ['urgent', 'normal', 'low'].includes(priority) ? priority : 'normal';
     const extractTableLayout =
-      tableLayout === 'sequential' ? 'sequential' : undefined;
+      type === 'WORKSHOP'
+        ? (tableLayout === 'split' ? 'split' : 'sequential')
+        : undefined;
     const correlationId = providedCorrelationId ?? randomUUID();
 
     const job = await ExtractionJob.create({
@@ -96,7 +98,7 @@ export class ExtractionService {
           priority: extractPriority,
           documentName,
           documentId,
-          ...(extractTableLayout ? { tableLayout: extractTableLayout } : {}),
+          ...(type === 'WORKSHOP' ? { tableLayout: extractTableLayout } : {}),
         },
         {
           headers: {
