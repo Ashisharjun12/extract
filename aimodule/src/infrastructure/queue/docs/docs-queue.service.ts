@@ -62,8 +62,14 @@ export class DocsQueueService {
     options: EnqueueOptions = {},
   ): Promise<EnqueueResult> {
     return DocsQueueService.mutex.runExclusive(async () => {
+    const typeUpper = type.toUpperCase();
+    const resolvedTableLayout =
+      typeUpper === 'WORKSHOP'
+        ? (options.tableLayout === 'split' ? 'split' : 'sequential')
+        : options.tableLayout;
+
     const cacheOptions: ContentJobOptions = {
-      tableLayout: options.tableLayout,
+      tableLayout: resolvedTableLayout,
     };
     const contentJobId = deriveContentJobId(type, urls, cacheOptions);
 
@@ -94,7 +100,7 @@ export class DocsQueueService {
         correlationId,
         documentName: options.documentName ?? 'unknown',
         documentId: options.documentId ?? 'unknown',
-        tableLayout: options.tableLayout,
+        tableLayout: resolvedTableLayout,
       },
       { priority, jobId: contentJobId },
     );

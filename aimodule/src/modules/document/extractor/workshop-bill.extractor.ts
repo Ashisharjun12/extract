@@ -644,7 +644,7 @@ export class WorkshopBillExtractor {
     inputData: unknown,
     options: WorkshopExtractOptions = {},
   ) {
-    const tableLayout = options.tableLayout ?? 'split';
+    const tableLayout = options.tableLayout === 'split' ? 'split' : 'sequential';
     const fileCount = Array.isArray(inputData) ? inputData.length : 1;
     const pageCount = resolveDocumentPageCount(inputData);
 
@@ -662,11 +662,13 @@ export class WorkshopBillExtractor {
     if (Array.isArray(parsedResult.lineItemsTable) && parsedResult.lineItemsTable.length > 0) {
       assignTableRowIndexes(parsedResult.lineItemsTable as Record<string, unknown>[]);
     }
-    if (Array.isArray(parsedResult.partsTable) && parsedResult.partsTable.length > 0) {
-      assignTableRowIndexes(parsedResult.partsTable as Record<string, unknown>[]);
-    }
-    if (Array.isArray(parsedResult.labourTable) && parsedResult.labourTable.length > 0) {
-      assignTableRowIndexes(parsedResult.labourTable as Record<string, unknown>[]);
+    if (tableLayout === 'split') {
+      if (Array.isArray(parsedResult.partsTable) && parsedResult.partsTable.length > 0) {
+        assignTableRowIndexes(parsedResult.partsTable as Record<string, unknown>[]);
+      }
+      if (Array.isArray(parsedResult.labourTable) && parsedResult.labourTable.length > 0) {
+        assignTableRowIndexes(parsedResult.labourTable as Record<string, unknown>[]);
+      }
     }
 
     const confidence = parsedResult.confidenceScore ?? 0;
@@ -733,7 +735,7 @@ export class WorkshopBillExtractor {
     const normVehicleNo = normaliseVehicleNo(rawVehicle);
     const vehicleState = extractVehicleState(normVehicleNo);
 
-    const enriched = {
+    const enriched: Record<string, unknown> = {
       ...parsedResult,
       tableLayout: parsedResult.tableLayout ?? tableLayout,
       vehicleNumber: normVehicleNo ?? rawVehicle,
@@ -745,14 +747,20 @@ export class WorkshopBillExtractor {
       extractionMode: 'chunk-fallback',
     };
 
+    if (tableLayout === 'sequential') {
+      delete enriched.partsTable;
+      delete enriched.labourTable;
+    }
+
     this.obs.info(
       `WorkshopBillExtractor: Extraction successful — ` +
       `pages=${pageCount}, ` +
       `layout=${tableLayout}, ` +
-      `lineItems=${parsedResult.lineItemsTable?.length ?? 0}, ` +
-      `parts=${parsedResult.partsTable?.length ?? 0}, ` +
-      `labour=${parsedResult.labourTable?.length ?? 0}, ` +
-      `billType=${billType}, ` +
+      `lineItems=${parsedResult.lineItemsTable?.length ?? 0}` +
+      (tableLayout === 'split'
+        ? `, parts=${parsedResult.partsTable?.length ?? 0}, labour=${parsedResult.labourTable?.length ?? 0}`
+        : '') +
+      `, billType=${billType}, ` +
       `gst=${gstInfo.type}(${gstInfo.rate}%), ` +
       `grandTotalOk=${grandTotalCheck.ok}, ` +
       `vehicleState=${vehicleState ?? 'N/A'}`,

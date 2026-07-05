@@ -96,8 +96,13 @@ const processDocumentJob = async (job: Job): Promise<any> => {
     };
 
     try {
+      const workshopLayout =
+        type.toUpperCase() === 'WORKSHOP'
+          ? (tableLayout === 'split' ? 'split' : 'sequential')
+          : undefined;
+
       const extractedData = await documentService.extractData(type, urls, {
-        tableLayout: tableLayout === 'sequential' ? 'sequential' : 'split',
+        tableLayout: workshopLayout,
       });
       const durationMs = Date.now() - startTime;
       const summary = getJobCostSummary();
@@ -135,7 +140,7 @@ const processDocumentJob = async (job: Job): Promise<any> => {
 
       const urlList = Array.isArray(urls) ? urls : [urls];
       void ExtractionResultCache.set(type, urlList, extractedData, {
-        tableLayout: tableLayout === 'sequential' ? 'sequential' : undefined,
+        tableLayout: workshopLayout,
       });
 
       return extractedData;

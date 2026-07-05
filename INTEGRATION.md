@@ -657,11 +657,11 @@ Defined in `aimodule/src/modules/document/schema/workshop/workshop-bill.schema.t
 | `detectedDocumentType` | e.g. `WORKSHOP_BILL` |
 | `confidenceScore` | 0–1 |
 | `requiresHumanReview` | Surface in UI when true |
-| `tableLayout` | `split` or `sequential` |
+| `tableLayout` | `sequential` (default) or `split` (legacy) |
 | `workshopDetails` | Workshop/invoice metadata |
-| `lineItemsTable` | Sequential layout — ordered PART/LABOUR rows |
-| `partsTable` | Split layout — parts rows |
-| `labourTable` | Split layout — labour rows |
+| `lineItemsTable` | **Primary** — all rows in PDF order (`PART` / `LABOUR` per `rowType`) |
+| `partsTable` | **Legacy split only** — omitted when `tableLayout` is `sequential` |
+| `labourTable` | **Legacy split only** — omitted when `tableLayout` is `sequential` |
 | `summary` | Totals, GST, grand total |
 | `extraFields` | `[{ key, value }]` catch-all |
 | `vehicleNumber`, `vehicleState`, `billType`, `gstSummary`, `grandTotalVerified`, `extractionMode` | Post-extraction enrichments |
@@ -712,7 +712,7 @@ Use `rowIndex` for insert order and audit. `srNo` is the printed PDF serial (may
 
 ## 8. Legacy mapper specification
 
-**Laravel on another server still needs the mapper.** Exposing aimodule on port 3000 does not change the JSON shape — aimodule always returns `lineItemsTable` / `partsTable` / `labourTable`; your UI expects `estimation_details` + `result.tables` with combined Denting/Painting/R&R columns.
+**Laravel on another server still needs the mapper.** Exposing aimodule on port 3000 does not change the JSON shape — aimodule returns **`lineItemsTable`** for WORKSHOP (sequential default); your UI expects `estimation_details` + `result.tables` with combined Denting/Painting/R&R columns.
 
 **Target:** existing UI JSON (Maruti portal / insurance estimate style).
 
@@ -924,16 +924,14 @@ Mirror the reference implementation in test-backend.
 
 ## 10. `tableLayout` guidance
 
-Pass `tableLayout` from Laravel UI checkbox or OEM auto-detect:
+WORKSHOP defaults to **`sequential`** when `tableLayout` is omitted. Laravel should use **`lineItemsTable` only** — `partsTable` / `labourTable` are not returned in sequential mode.
 
 | PDF format | `tableLayout` | Examples |
 |------------|---------------|----------|
-| Parts block then labour block | omit or `split` | Toyota, Eicher |
-| Part Detail + Labour Detail sections | `sequential` | Kia, Hyundai |
-| Mixed P/L in one table | `sequential` | Honda |
-| Maruti portal — combined row per part | `sequential` + mapper merge | Ertiga insurance estimate |
+| Default — unified PDF order | omit or `sequential` | Kia, Hyundai, Honda, BharatBenz |
+| Legacy split (deprecated) | `split` | Old Toyota/Eicher two-block layouts only |
 
-`sequential` returns `lineItemsTable` in PDF order plus derived `partsTable` and `labourTable` for backward compatibility.
+`sequential` returns **`lineItemsTable` only** (smaller webhook payload). Use `rowType` on each row to distinguish PART vs LABOUR.
 
 ---
 

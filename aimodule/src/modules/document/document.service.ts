@@ -65,7 +65,7 @@ export class DocumentService {
           return await this.claimExtractor.extract(inputData);
         case docType.WORKSHOP:
           return await this.workshopExtractor.extract(inputData, {
-            tableLayout: options.tableLayout ?? 'split',
+            tableLayout: options.tableLayout === 'split' ? 'split' : 'sequential',
           });
         default:
           throw new Error(`Unsupported document type: ${documentType}`);

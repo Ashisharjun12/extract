@@ -12,7 +12,7 @@ export const ExtractDocumentSchema = z.object({
     mode: z.enum(['sync', 'async']).optional(),
     /** urgent | normal | low — maps to QUEUE_PRIORITY_* in .env */
     priority: z.enum(['urgent', 'normal', 'low']).optional(),
-    /** WORKSHOP only: split = partsTable + labourTable; sequential = lineItemsTable in PDF order */
+    /** WORKSHOP only: sequential (default) = lineItemsTable in PDF order; split = legacy partsTable + labourTable */
     tableLayout: z.enum(['split', 'sequential']).optional(),
   }),
 });

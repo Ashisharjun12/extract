@@ -47,7 +47,7 @@ function resolveRecordId(record) {
 export function DocTestPage({ docType }) {
   const [modeChoice, setModeChoice] = useState('auto')
   const [priority, setPriority] = useState('normal')
-  const [preserveSequence, setPreserveSequence] = useState(false)
+  const [preserveSequence, setPreserveSequence] = useState(true)
   const [files, setFiles] = useState([])
   const [savedUploads, setSavedUploads] = useState([])
   const [selectedUploadIds, setSelectedUploadIds] = useState([])
@@ -133,7 +133,7 @@ export function DocTestPage({ docType }) {
         uploadIds: selectedUploadIds,
         mode,
         priority,
-        tableLayout: docType === 'WORKSHOP' && preserveSequence ? 'sequential' : undefined,
+        tableLayout: docType === 'WORKSHOP' ? (preserveSequence ? 'sequential' : 'split') : undefined,
       })
       toast.success('Extraction started.')
       setSelectedUploadIds([])

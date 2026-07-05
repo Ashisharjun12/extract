@@ -65,11 +65,16 @@ export class DocumentController {
     const priorityLevel = (priority ?? 'normal') as JobPriorityLevel;
 
     try {
+      const workshopTableLayout =
+        typeUpper === 'WORKSHOP'
+          ? (tableLayout === 'split' ? 'split' : 'sequential')
+          : undefined;
+
       const enqueueResult = await this.docsQueueService.enqueueDocument(type, finalUrls, {
         priorityLevel,
         documentName,
         documentId,
-        tableLayout: tableLayout === 'sequential' ? 'sequential' : undefined,
+        tableLayout: workshopTableLayout,
       });
 
       if (enqueueResult.fromCache && enqueueResult.cachedResult != null) {

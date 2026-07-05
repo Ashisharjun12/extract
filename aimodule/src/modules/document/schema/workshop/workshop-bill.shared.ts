@@ -806,13 +806,10 @@ export function expandLineItemsArrayRows(raw: Record<string, unknown>): Record<s
     lineItemsTable = rawItems as Record<string, unknown>[];
   }
 
-  const { partsTable, labourTable } = deriveSplitTablesFromLineItems(lineItemsTable);
   return {
     ...raw,
     tableLayout: 'sequential',
     lineItemsTable,
-    partsTable,
-    labourTable,
   };
 }
 

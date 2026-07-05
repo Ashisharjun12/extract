@@ -41,7 +41,7 @@ export function rowSummary(job) {
       const lineItemCount = r.lineItemsTable?.length ?? 0
       const partsCount = r.partsTable?.length ?? 0
       const labourCount = r.labourTable?.length ?? 0
-      const detail = r.tableLayout === 'sequential' && lineItemCount > 0
+      const detail = lineItemCount > 0
         ? `${lineItemCount} line items`
         : `${partsCount} parts · ${labourCount} labour`
       return {

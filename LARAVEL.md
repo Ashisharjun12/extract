@@ -202,11 +202,7 @@ All rows in **PDF document order**. Primary table for mapper (phase 2).
 | `labourCost` | null | total if LABOUR |
 | `extraColumns` | `[{key, value}]` | Share %, CGST %, Status PAID, etc. |
 
-Also returned (derived, same rows split by type):
-- `partsTable` — PART rows only
-- `labourTable` — LABOUR rows only
-
-Use **`lineItemsTable`** for PDF order. Use derived tables only if needed for counting.
+**WORKSHOP responses use `lineItemsTable` only** — no `partsTable` or `labourTable`. Use `rowType` (`PART` / `LABOUR`) per row. `tableLayout` defaults to `sequential` if omitted.
 
 ### Example — one PART row (from real BharatBenz bill)
 

@@ -12,7 +12,7 @@ import {
 export const WorkshopBillSchema = WorkshopDocumentGateSchema.extend({
   workshopDetails: WorkshopDetailsSchema,
 
-  tableLayout: z.enum(['split', 'sequential']).optional().default('split'),
+  tableLayout: z.enum(['split', 'sequential']).optional().default('sequential'),
   lineItemsTable: z.array(WorkshopLineItemRowSchema).nullish().default([]),
   partsTable: z.array(WorkshopPartsRowSchema).nullish().default([]),
   labourTable: z.array(WorkshopLabourRowSchema).nullish().default([]),
